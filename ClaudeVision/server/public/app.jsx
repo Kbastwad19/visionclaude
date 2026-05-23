@@ -1,8 +1,8 @@
 const { useState, useEffect, useRef } = React;
 
 const DEFAULTS = /*EDITMODE-BEGIN*/{
-  "accent": "#6FE3A8",
-  "palette": "cream",
+  "accent": "#FF7A33",
+  "palette": "graphite",
   "heroLayout": "split",
   "loginStyle": "filled",
   "showSpecs": true,
@@ -116,12 +116,15 @@ const Nav = ({ p, accent, loginStyle, onLogin }) => (
         Beta · v0.4
       </span>
     </div>
-    <nav style={{ display: "flex", alignItems: "center", gap: 28, fontFamily: "'Inter Tight', sans-serif", fontSize: 14, color: p.ink }}>
+    <nav className="nav-links" style={{ display: "flex", alignItems: "center", gap: 28, fontFamily: "'Inter Tight', sans-serif", fontSize: 14, color: p.ink }}>
       <a href="#capabilities" style={{ color: p.ink, textDecoration: "none" }}>Capabilities</a>
       <a href="#how" style={{ color: p.ink, textDecoration: "none" }}>How it works</a>
       <a href="#specs" style={{ color: p.ink, textDecoration: "none" }}>Compatibility</a>
       <LoginButton variant={loginStyle} accent={accent} p={p} onClick={onLogin} compact />
     </nav>
+    <div className="nav-login" style={{ display: "none" }}>
+      <LoginButton variant={loginStyle} accent={accent} p={p} onClick={onLogin} compact />
+    </div>
   </header>
 );
 
@@ -203,7 +206,7 @@ const LoginButton = ({ variant, accent, p, onClick, compact = false, large = fal
 const Hero = ({ p, accent, layout, headline, loginStyle, onLogin }) => {
   const lines = headline.split("\n");
   return (
-    <section style={{
+    <section className="hero-section" style={{
       padding: layout === "centered" ? "96px 48px 80px" : "80px 48px",
       maxWidth: 1440, margin: "0 auto"
     }}>
@@ -234,14 +237,8 @@ const Hero = ({ p, accent, layout, headline, loginStyle, onLogin }) => {
         </p>
         <div style={{ display: "flex", alignItems: "center", gap: 14, justifyContent: layout === "centered" ? "center" : "flex-start", flexWrap: "wrap" }}>
           <LoginButton variant={loginStyle} accent={accent} p={p} onClick={onLogin} large />
-          <a href="#how" style={{
-            fontFamily: "'Inter Tight', sans-serif", fontSize: 15, color: p.ink, textDecoration: "none",
-            display: "inline-flex", alignItems: "center", gap: 8, padding: "12px 4px"
-          }}>
-            Watch the 60-second demo <span style={{ fontSize: 18 }}>→</span>
-          </a>
         </div>
-        <div style={{ marginTop: 56, display: "flex", gap: 36, color: p.muted, fontFamily: "ui-monospace, monospace", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", flexWrap: "wrap", justifyContent: layout === "centered" ? "center" : "flex-start" }}>
+        <div className="hero-meta" style={{ marginTop: 56, display: "flex", gap: 36, color: p.muted, fontFamily: "ui-monospace, monospace", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", flexWrap: "wrap", justifyContent: layout === "centered" ? "center" : "flex-start" }}>
           <span>Voice latency · 240 ms median</span>
           <span>Privacy · on-device wake</span>
           <span>Languages · 38</span>
@@ -250,8 +247,8 @@ const Hero = ({ p, accent, layout, headline, loginStyle, onLogin }) => {
       </div>
 
       {layout === "split" && (
-        <div style={{ position: "relative" }}>
-          <div style={{
+        <div className="hero-visual-wrap" style={{ position: "relative" }}>
+          <div className="hero-visual" style={{
             background: p.panel, borderRadius: 18, padding: 28, border: `1px solid ${p.line}`,
             position: "relative", overflow: "hidden"
           }}>
@@ -274,7 +271,7 @@ const Hero = ({ p, accent, layout, headline, loginStyle, onLogin }) => {
 };
 
 const FloatingCallout = ({ p, accent }) => (
-  <div style={{
+  <div className="floating-callout" style={{
     position: "absolute", bottom: -28, left: -32,
     background: p.bg, border: `1px solid ${p.line}`,
     padding: "14px 18px", borderRadius: 12, maxWidth: 280,
@@ -311,7 +308,7 @@ const FlowSection = ({ p, accent }) => (
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 36, gap: 24, flexWrap: "wrap" }}>
         <div>
           <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 11, color: p.muted, letterSpacing: "0.1em", textTransform: "uppercase" }}>§ Live data flow</span>
-          <h2 className="shimmer-text" style={{
+          <h2 className="shimmer-text flow-headline" style={{
             fontFamily: "var(--display-font)", fontSize: "clamp(36px, 4.2vw, 60px)", fontWeight: 400,
             letterSpacing: "-0.02em", color: p.ink, margin: "14px 0 0", textWrap: "balance",
             "--accent": accent
@@ -362,7 +359,7 @@ const CAPABILITIES = [
 const Capabilities = ({ p, accent }) => (
   <section id="capabilities" style={{ padding: "100px 48px", borderTop: `1px solid ${p.line}`, borderBottom: `1px solid ${p.line}` }}>
     <div style={{ maxWidth: 1440, margin: "0 auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 56, gap: 32, flexWrap: "wrap" }}>
+      <div className="section-head" style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 56, gap: 32, flexWrap: "wrap" }}>
         <h2 style={{
           fontFamily: "var(--display-font)", fontSize: "clamp(36px, 4vw, 56px)", fontWeight: 400, letterSpacing: "-0.02em",
           color: p.ink, margin: 0, maxWidth: 720, textWrap: "balance"
@@ -373,7 +370,7 @@ const Capabilities = ({ p, accent }) => (
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 0, borderTop: `1px solid ${p.line}` }}>
         {CAPABILITIES.map((c, i) => (
-          <div key={i} style={{
+          <div key={i} className="capability-cell" style={{
             padding: "32px 28px 36px",
             borderRight: i < CAPABILITIES.length - 1 ? `1px solid ${p.line}` : "none",
             borderBottom: `1px solid ${p.line}`,
@@ -416,7 +413,7 @@ const HowItWorks = ({ p, accent }) => {
   ];
   return (
     <section id="how" style={{ padding: "100px 48px", maxWidth: 1440, margin: "0 auto" }}>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1.4fr", gap: 80, alignItems: "start" }}>
+      <div className="how-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1.4fr", gap: 80, alignItems: "start" }}>
         <div>
           <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 11, color: p.muted, letterSpacing: "0.1em", textTransform: "uppercase" }}>§ How it works</span>
           <h2 style={{ fontFamily: "var(--display-font)", fontSize: "clamp(36px, 4vw, 56px)", fontWeight: 400, letterSpacing: "-0.02em", color: p.ink, margin: "16px 0 24px", textWrap: "balance" }}>
@@ -428,13 +425,13 @@ const HowItWorks = ({ p, accent }) => {
         </div>
         <ol style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 0 }}>
           {steps.map((s, i) => (
-            <li key={i} style={{ display: "grid", gridTemplateColumns: "84px 1fr auto", gap: 24, padding: "28px 0", borderTop: `1px solid ${p.line}`, alignItems: "baseline" }}>
+            <li key={i} className="how-step" style={{ display: "grid", gridTemplateColumns: "84px 1fr auto", gap: 24, padding: "28px 0", borderTop: `1px solid ${p.line}`, alignItems: "baseline" }}>
               <span style={{ fontFamily: "var(--display-font)", fontStyle: "italic", fontSize: 32, color: accent }}>{s.n}</span>
               <div>
                 <h4 style={{ fontFamily: "'Inter Tight', sans-serif", fontSize: 22, fontWeight: 500, color: p.ink, margin: "0 0 6px", letterSpacing: "-0.01em" }}>{s.t}</h4>
                 <p style={{ fontFamily: "'Inter Tight', sans-serif", fontSize: 15, color: p.muted, margin: 0, lineHeight: 1.5, maxWidth: 540, textWrap: "pretty" }}>{s.d}</p>
               </div>
-              <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 11, color: p.muted, letterSpacing: "0.1em" }}>STEP 0{i + 1}</span>
+              <span className="step-side" style={{ fontFamily: "ui-monospace, monospace", fontSize: 11, color: p.muted, letterSpacing: "0.1em" }}>STEP 0{i + 1}</span>
             </li>
           ))}
           <li style={{ borderTop: `1px solid ${p.line}`, height: 1 }}></li>
@@ -450,7 +447,7 @@ const HowItWorks = ({ p, accent }) => {
 const Specs = ({ p, accent }) => (
   <section id="specs" style={{ padding: "80px 48px", background: p.panel, borderTop: `1px solid ${p.line}`, borderBottom: `1px solid ${p.line}` }}>
     <div style={{ maxWidth: 1440, margin: "0 auto" }}>
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 32, gap: 24, flexWrap: "wrap" }}>
+      <div className="section-head" style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 32, gap: 24, flexWrap: "wrap" }}>
         <h2 style={{ fontFamily: "var(--display-font)", fontSize: "clamp(28px, 3vw, 42px)", fontWeight: 400, letterSpacing: "-0.02em", color: p.ink, margin: 0 }}>
           Works with the glasses you already wear.
         </h2>
@@ -463,7 +460,7 @@ const Specs = ({ p, accent }) => (
           { name: "Display-only HUDs", status: "Partial", note: "Captions of voice reply" },
           { name: "Phone fallback", status: "Always on", note: "iOS · Android companion app" }
         ].map((row, i, arr) => (
-          <div key={i} style={{ padding: "24px 22px", borderRight: i < arr.length - 1 ? `1px solid ${p.line}` : "none" }}>
+          <div key={i} className="specs-row" style={{ padding: "24px 22px", borderRight: i < arr.length - 1 ? `1px solid ${p.line}` : "none" }}>
             <div style={{ fontFamily: "ui-monospace, monospace", fontSize: 10, letterSpacing: "0.1em", color: p.muted, textTransform: "uppercase", marginBottom: 10 }}>
               <Dot color={row.status === "Partial" ? "#E0A55C" : accent} /> &nbsp; {row.status}
             </div>
@@ -480,7 +477,7 @@ const Specs = ({ p, accent }) => (
 // Footer CTA + footer
 // ───────────────────────────────────────────────────────────────
 const FooterCTA = ({ p, accent, loginStyle, onLogin }) => (
-  <section style={{ padding: "120px 48px", textAlign: "center" }}>
+  <section className="footer-cta" style={{ padding: "120px 48px", textAlign: "center" }}>
     <div style={{ maxWidth: 720, margin: "0 auto" }}>
       <Aperture size={36} color={accent} />
       <h2 style={{ fontFamily: "var(--display-font)", fontSize: "clamp(40px, 5vw, 68px)", fontWeight: 400, letterSpacing: "-0.025em", color: p.ink, margin: "20px 0 18px", textWrap: "balance", lineHeight: 1.02 }}>
@@ -498,7 +495,7 @@ const FooterCTA = ({ p, accent, loginStyle, onLogin }) => (
 );
 
 const Footer = ({ p }) => (
-  <footer style={{ padding: "32px 48px 48px", borderTop: `1px solid ${p.line}`, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 16, fontFamily: "'Inter Tight', sans-serif", fontSize: 12, color: p.muted }}>
+  <footer className="footer-row" style={{ padding: "32px 48px 48px", borderTop: `1px solid ${p.line}`, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 16, fontFamily: "'Inter Tight', sans-serif", fontSize: 12, color: p.muted }}>
     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
       <Aperture size={14} color={p.muted} />
       <span>Aside — a quiet companion for your glasses.</span>
@@ -513,30 +510,35 @@ const Footer = ({ p }) => (
 // Login modal (interactive)
 // ───────────────────────────────────────────────────────────────
 const LoginModal = ({ open, onClose, p, accent }) => {
-  const [step, setStep] = useState("idle"); // idle, code, success
-  const [code, setCode] = useState(["", "", "", "", "", ""]);
-  const [email, setEmail] = useState("");
-  const refs = useRef([]);
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!open) { setStep("idle"); setCode(["", "", "", "", "", ""]); setEmail(""); }
+    if (!open) { setPassword(""); setError(""); setLoading(false); }
   }, [open]);
 
   if (!open) return null;
 
-  const submitEmail = (e) => {
+  const submit = async (e) => {
     e.preventDefault();
-    if (!email.includes("@")) return;
-    setStep("code");
-    setTimeout(() => refs.current[0]?.focus(), 60);
-  };
-
-  const setDigit = (i, v) => {
-    v = v.replace(/\D/g, "").slice(0, 1);
-    const next = [...code]; next[i] = v; setCode(next);
-    if (v && i < 5) refs.current[i + 1]?.focus();
-    if (next.every(d => d.length === 1)) {
-      setTimeout(() => setStep("success"), 220);
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch("/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      if (res.ok) {
+        window.location.href = "/app";
+      } else {
+        setError("Incorrect password.");
+        setLoading(false);
+      }
+    } catch {
+      setError("Connection error. Try again.");
+      setLoading(false);
     }
   };
 
@@ -546,7 +548,7 @@ const LoginModal = ({ open, onClose, p, accent }) => {
       display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 24,
       animation: "fadeIn 220ms ease"
     }}>
-      <div onClick={e => e.stopPropagation()} style={{
+      <div onClick={e => e.stopPropagation()} className="login-modal" style={{
         background: p.bg, borderRadius: 18, padding: 40, maxWidth: 440, width: "100%",
         border: `1px solid ${p.line}`, position: "relative",
         animation: "popIn 280ms cubic-bezier(.2,.9,.3,1.2)"
@@ -557,97 +559,31 @@ const LoginModal = ({ open, onClose, p, accent }) => {
         }}>×</button>
         <Aperture size={28} color={accent} />
         <h3 style={{ fontFamily: "var(--display-font)", fontSize: 32, fontWeight: 400, letterSpacing: "-0.02em", color: p.ink, margin: "16px 0 8px", lineHeight: 1.05 }}>
-          {step === "idle" && <>Log in to <em>Aside</em>.</>}
-          {step === "code" && <>Check your inbox.</>}
-          {step === "success" && <>You're in. <em>Welcome.</em></>}
+          Log in to <em>Aside</em>.
         </h3>
         <p style={{ fontFamily: "'Inter Tight', sans-serif", fontSize: 14, color: p.muted, lineHeight: 1.5, margin: "0 0 28px" }}>
-          {step === "idle" && "We'll send a six-digit code to your email. No password required."}
-          {step === "code" && <>A code is on its way to <strong style={{ color: p.ink }}>{email}</strong>. It expires in 10 minutes.</>}
-          {step === "success" && "Your glasses will sync the next time they're in range. We've added you to the early-access queue."}
+          Enter your password to access the voice interface.
         </p>
-
-        {step === "idle" && (
-          <form onSubmit={submitEmail}>
-            <label style={{ fontFamily: "ui-monospace, monospace", fontSize: 10, letterSpacing: "0.1em", color: p.muted, textTransform: "uppercase" }}>
-              Email address
-            </label>
-            <input
-              autoFocus value={email} onChange={e => setEmail(e.target.value)}
-              type="email" placeholder="you@somewhere.com"
-              style={{
-                width: "100%", marginTop: 6, padding: "14px 16px", borderRadius: 10,
-                border: `1px solid ${p.line}`, background: p.panel, color: p.ink,
-                fontFamily: "'Inter Tight', sans-serif", fontSize: 16, outline: "none", boxSizing: "border-box"
-              }} />
-            <button type="submit" style={{
-              marginTop: 16, width: "100%", padding: "14px", borderRadius: 10, border: "none",
-              background: accent, color: p.ink, fontFamily: "'Inter Tight', sans-serif", fontSize: 15, fontWeight: 500, cursor: "pointer"
-            }}>
-              Send code →
-            </button>
-            <div style={{ marginTop: 18, display: "flex", alignItems: "center", gap: 12 }}>
-              <div style={{ flex: 1, height: 1, background: p.line }} />
-              <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 10, color: p.muted, letterSpacing: "0.1em" }}>OR</span>
-              <div style={{ flex: 1, height: 1, background: p.line }} />
-            </div>
-            <button type="button" style={{
-              marginTop: 14, width: "100%", padding: "12px", borderRadius: 10,
-              background: "transparent", border: `1px solid ${p.line}`, color: p.ink,
-              fontFamily: "'Inter Tight', sans-serif", fontSize: 14, cursor: "pointer"
-            }}>
-              Pair from your glasses (scan QR)
-            </button>
-          </form>
-        )}
-
-        {step === "code" && (
-          <div>
-            <div style={{ display: "flex", gap: 10, justifyContent: "space-between" }}>
-              {code.map((d, i) => (
-                <input key={i} ref={el => refs.current[i] = el} value={d}
-                  onChange={e => setDigit(i, e.target.value)}
-                  onKeyDown={e => { if (e.key === "Backspace" && !d && i > 0) refs.current[i - 1]?.focus(); }}
-                  inputMode="numeric" maxLength={1}
-                  style={{
-                    width: 48, height: 60, textAlign: "center", borderRadius: 10,
-                    border: `1px solid ${d ? accent : p.line}`, background: p.panel,
-                    color: p.ink, fontFamily: "var(--display-font)", fontSize: 28, outline: "none",
-                    transition: "border 180ms ease"
-                  }} />
-              ))}
-            </div>
-            <button onClick={() => setStep("idle")} style={{
-              marginTop: 24, background: "transparent", border: "none", color: p.muted,
-              fontFamily: "'Inter Tight', sans-serif", fontSize: 13, cursor: "pointer", padding: 0
-            }}>
-              ← Use a different email
-            </button>
-          </div>
-        )}
-
-        {step === "success" && (
-          <div style={{ padding: "20px 0 4px" }}>
-            <div style={{
-              background: `${accent}22`, border: `1px solid ${accent}`, borderRadius: 12,
-              padding: 18, display: "flex", alignItems: "center", gap: 14
-            }}>
-              <div style={{ width: 38, height: 38, borderRadius: 999, background: accent, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <Aperture size={20} color={p.ink} />
-              </div>
-              <div>
-                <div style={{ fontFamily: "'Inter Tight', sans-serif", fontSize: 14, color: p.ink, fontWeight: 500 }}>Session ready</div>
-                <div style={{ fontFamily: "ui-monospace, monospace", fontSize: 11, color: p.muted, marginTop: 2 }}>Queue position · #11,402</div>
-              </div>
-            </div>
-            <button onClick={onClose} style={{
-              marginTop: 18, width: "100%", padding: "14px", borderRadius: 10, border: "none",
-              background: p.ink, color: p.bg, fontFamily: "'Inter Tight', sans-serif", fontSize: 15, fontWeight: 500, cursor: "pointer"
-            }}>
-              Continue to dashboard →
-            </button>
-          </div>
-        )}
+        <form onSubmit={submit}>
+          <label style={{ fontFamily: "ui-monospace, monospace", fontSize: 10, letterSpacing: "0.1em", color: p.muted, textTransform: "uppercase" }}>
+            Password
+          </label>
+          <input
+            autoFocus type="password" value={password} onChange={e => setPassword(e.target.value)}
+            style={{
+              width: "100%", marginTop: 6, padding: "14px 16px", borderRadius: 10,
+              border: `1px solid ${error ? "#e05" : p.line}`, background: p.panel, color: p.ink,
+              fontFamily: "'Inter Tight', sans-serif", fontSize: 16, outline: "none", boxSizing: "border-box"
+            }} />
+          {error && <p style={{ fontFamily: "'Inter Tight', sans-serif", fontSize: 13, color: "#e05", margin: "8px 0 0" }}>{error}</p>}
+          <button type="submit" disabled={loading || !password} style={{
+            marginTop: 16, width: "100%", padding: "14px", borderRadius: 10, border: "none",
+            background: accent, color: p.ink, fontFamily: "'Inter Tight', sans-serif", fontSize: 15, fontWeight: 500,
+            cursor: loading ? "wait" : "pointer", opacity: !password ? 0.5 : 1
+          }}>
+            {loading ? "Checking…" : "Log in →"}
+          </button>
+        </form>
       </div>
     </div>
   );
@@ -663,7 +599,7 @@ const Tweaks = ({ t, setTweak }) => (
         label="Accent"
         value={t.accent}
         onChange={v => setTweak("accent", v)}
-        options={["#6FE3A8", "#FFB85C", "#9DB8FF", "#E89BE3"]} />
+        options={["#FF7A33", "#FFB85C", "#6FE3A8", "#9DB8FF", "#E89BE3"]} />
       <TweakRadio
         label="Palette"
         value={t.palette}

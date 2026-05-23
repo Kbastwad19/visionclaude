@@ -247,7 +247,7 @@ const LiveCaptureCard = ({ accent, ink, muted, line, bg, panel }) => {
     return () => clearInterval(id);
   }, []);
   return (
-    <div style={{
+    <div className="live-card" style={{
       background: bg, border: `1px solid ${line}`, borderRadius: 14, padding: 18,
       fontFamily: "'Inter Tight', sans-serif", minWidth: 320, maxWidth: 360
     }}>
