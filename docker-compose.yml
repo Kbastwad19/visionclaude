@@ -1,0 +1,7 @@
+services:
+  visionclaude:
+    build: ./ClaudeVision/server
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:18790:18790"
+    env_file: .env
