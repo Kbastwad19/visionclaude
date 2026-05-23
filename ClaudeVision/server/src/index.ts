@@ -54,6 +54,7 @@ async function main() {
   const requestQueue = new RequestQueue(2);
 
   const app = express();
+  app.set("trust proxy", 1); // trust Nginx reverse proxy for secure cookies
   app.use(cors());
   app.use(express.json({ limit: "50mb" }));
 
