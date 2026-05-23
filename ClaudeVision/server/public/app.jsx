@@ -513,30 +513,35 @@ const Footer = ({ p }) => (
 // Login modal (interactive)
 // ───────────────────────────────────────────────────────────────
 const LoginModal = ({ open, onClose, p, accent }) => {
-  const [step, setStep] = useState("idle"); // idle, code, success
-  const [code, setCode] = useState(["", "", "", "", "", ""]);
-  const [email, setEmail] = useState("");
-  const refs = useRef([]);
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!open) { setStep("idle"); setCode(["", "", "", "", "", ""]); setEmail(""); }
+    if (!open) { setPassword(""); setError(""); setLoading(false); }
   }, [open]);
 
   if (!open) return null;
 
-  const submitEmail = (e) => {
+  const submit = async (e) => {
     e.preventDefault();
-    if (!email.includes("@")) return;
-    setStep("code");
-    setTimeout(() => refs.current[0]?.focus(), 60);
-  };
-
-  const setDigit = (i, v) => {
-    v = v.replace(/\D/g, "").slice(0, 1);
-    const next = [...code]; next[i] = v; setCode(next);
-    if (v && i < 5) refs.current[i + 1]?.focus();
-    if (next.every(d => d.length === 1)) {
-      setTimeout(() => setStep("success"), 220);
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch("/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      if (res.ok) {
+        window.location.href = "/app";
+      } else {
+        setError("Incorrect password.");
+        setLoading(false);
+      }
+    } catch {
+      setError("Connection error. Try again.");
+      setLoading(false);
     }
   };
 
@@ -557,97 +562,38 @@ const LoginModal = ({ open, onClose, p, accent }) => {
         }}>×</button>
         <Aperture size={28} color={accent} />
         <h3 style={{ fontFamily: "var(--display-font)", fontSize: 32, fontWeight: 400, letterSpacing: "-0.02em", color: p.ink, margin: "16px 0 8px", lineHeight: 1.05 }}>
-          {step === "idle" && <>Log in to <em>Aside</em>.</>}
-          {step === "code" && <>Check your inbox.</>}
-          {step === "success" && <>You're in. <em>Welcome.</em></>}
+          Log in to <em>Aside</em>.
         </h3>
         <p style={{ fontFamily: "'Inter Tight', sans-serif", fontSize: 14, color: p.muted, lineHeight: 1.5, margin: "0 0 28px" }}>
-          {step === "idle" && "We'll send a six-digit code to your email. No password required."}
-          {step === "code" && <>A code is on its way to <strong style={{ color: p.ink }}>{email}</strong>. It expires in 10 minutes.</>}
-          {step === "success" && "Your glasses will sync the next time they're in range. We've added you to the early-access queue."}
+          Enter your password to access the voice interface.
         </p>
-
-        {step === "idle" && (
-          <form onSubmit={submitEmail}>
-            <label style={{ fontFamily: "ui-monospace, monospace", fontSize: 10, letterSpacing: "0.1em", color: p.muted, textTransform: "uppercase" }}>
-              Email address
-            </label>
-            <input
-              autoFocus value={email} onChange={e => setEmail(e.target.value)}
-              type="email" placeholder="you@somewhere.com"
-              style={{
-                width: "100%", marginTop: 6, padding: "14px 16px", borderRadius: 10,
-                border: `1px solid ${p.line}`, background: p.panel, color: p.ink,
-                fontFamily: "'Inter Tight', sans-serif", fontSize: 16, outline: "none", boxSizing: "border-box"
-              }} />
-            <button type="submit" style={{
-              marginTop: 16, width: "100%", padding: "14px", borderRadius: 10, border: "none",
-              background: accent, color: p.ink, fontFamily: "'Inter Tight', sans-serif", fontSize: 15, fontWeight: 500, cursor: "pointer"
-            }}>
-              Send code →
-            </button>
-            <div style={{ marginTop: 18, display: "flex", alignItems: "center", gap: 12 }}>
-              <div style={{ flex: 1, height: 1, background: p.line }} />
-              <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 10, color: p.muted, letterSpacing: "0.1em" }}>OR</span>
-              <div style={{ flex: 1, height: 1, background: p.line }} />
-            </div>
-            <button type="button" style={{
-              marginTop: 14, width: "100%", padding: "12px", borderRadius: 10,
-              background: "transparent", border: `1px solid ${p.line}`, color: p.ink,
-              fontFamily: "'Inter Tight', sans-serif", fontSize: 14, cursor: "pointer"
-            }}>
-              Pair from your glasses (scan QR)
-            </button>
-          </form>
-        )}
-
-        {step === "code" && (
-          <div>
-            <div style={{ display: "flex", gap: 10, justifyContent: "space-between" }}>
-              {code.map((d, i) => (
-                <input key={i} ref={el => refs.current[i] = el} value={d}
-                  onChange={e => setDigit(i, e.target.value)}
-                  onKeyDown={e => { if (e.key === "Backspace" && !d && i > 0) refs.current[i - 1]?.focus(); }}
-                  inputMode="numeric" maxLength={1}
-                  style={{
-                    width: 48, height: 60, textAlign: "center", borderRadius: 10,
-                    border: `1px solid ${d ? accent : p.line}`, background: p.panel,
-                    color: p.ink, fontFamily: "var(--display-font)", fontSize: 28, outline: "none",
-                    transition: "border 180ms ease"
-                  }} />
-              ))}
-            </div>
-            <button onClick={() => setStep("idle")} style={{
-              marginTop: 24, background: "transparent", border: "none", color: p.muted,
-              fontFamily: "'Inter Tight', sans-serif", fontSize: 13, cursor: "pointer", padding: 0
-            }}>
-              ← Use a different email
-            </button>
-          </div>
-        )}
-
-        {step === "success" && (
-          <div style={{ padding: "20px 0 4px" }}>
-            <div style={{
-              background: `${accent}22`, border: `1px solid ${accent}`, borderRadius: 12,
-              padding: 18, display: "flex", alignItems: "center", gap: 14
-            }}>
-              <div style={{ width: 38, height: 38, borderRadius: 999, background: accent, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <Aperture size={20} color={p.ink} />
-              </div>
-              <div>
-                <div style={{ fontFamily: "'Inter Tight', sans-serif", fontSize: 14, color: p.ink, fontWeight: 500 }}>Session ready</div>
-                <div style={{ fontFamily: "ui-monospace, monospace", fontSize: 11, color: p.muted, marginTop: 2 }}>Queue position · #11,402</div>
-              </div>
-            </div>
-            <button onClick={onClose} style={{
-              marginTop: 18, width: "100%", padding: "14px", borderRadius: 10, border: "none",
-              background: p.ink, color: p.bg, fontFamily: "'Inter Tight', sans-serif", fontSize: 15, fontWeight: 500, cursor: "pointer"
-            }}>
-              Continue to dashboard →
-            </button>
-          </div>
-        )}
+        <form onSubmit={submit}>
+          <label style={{ fontFamily: "ui-monospace, monospace", fontSize: 10, letterSpacing: "0.1em", color: p.muted, textTransform: "uppercase" }}>
+            Password
+          </label>
+          <input
+            autoFocus type="password" value={password}
+            onChange={e => setPassword(e.target.value)}
+            placeholder="••••••••"
+            style={{
+              width: "100%", marginTop: 6, padding: "14px 16px", borderRadius: 10,
+              border: `1px solid ${p.line}`, background: p.panel, color: p.ink,
+              fontFamily: "'Inter Tight', sans-serif", fontSize: 16, outline: "none", boxSizing: "border-box"
+            }} />
+          {error && (
+            <p style={{ fontFamily: "'Inter Tight', sans-serif", fontSize: 13, color: "#E05C5C", margin: "8px 0 0" }}>
+              {error}
+            </p>
+          )}
+          <button type="submit" disabled={loading} style={{
+            marginTop: 16, width: "100%", padding: "14px", borderRadius: 10, border: "none",
+            background: accent, color: p.ink, fontFamily: "'Inter Tight', sans-serif",
+            fontSize: 15, fontWeight: 500, cursor: loading ? "not-allowed" : "pointer",
+            opacity: loading ? 0.7 : 1
+          }}>
+            {loading ? "Logging in…" : "Log in →"}
+          </button>
+        </form>
       </div>
     </div>
   );

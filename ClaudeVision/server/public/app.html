@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Aside — Voice</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600&display=swap" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #F4EFE5;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      font-family: 'Inter Tight', sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    #status {
+      font-size: 13px;
+      color: #7B7468;
+      margin-bottom: 32px;
+      font-family: ui-monospace, monospace;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    #talk {
+      width: 120px;
+      height: 120px;
+      border-radius: 999px;
+      border: none;
+      background: #6FE3A8;
+      color: #1A1714;
+      font-family: 'Inter Tight', sans-serif;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 180ms ease, box-shadow 180ms ease;
+      box-shadow: 0 10px 30px -12px #6FE3A8;
+    }
+    #talk:hover { transform: translateY(-2px); box-shadow: 0 16px 40px -12px #6FE3A8; }
+    #talk:active { transform: scale(0.96); }
+    #talk.listening {
+      background: #1A1714;
+      color: #6FE3A8;
+      box-shadow: 0 10px 30px -12px #1A1714;
+    }
+    #response {
+      margin-top: 40px;
+      max-width: 380px;
+      text-align: center;
+      font-size: 16px;
+      line-height: 1.55;
+      color: #1A1714;
+      min-height: 48px;
+      padding: 0 24px;
+    }
+    #logout {
+      position: fixed;
+      top: 20px;
+      right: 24px;
+      background: transparent;
+      border: 1px solid #D9D1C0;
+      color: #7B7468;
+      font-family: 'Inter Tight', sans-serif;
+      font-size: 13px;
+      padding: 8px 16px;
+      border-radius: 999px;
+      cursor: pointer;
+    }
+    #logout:hover { border-color: #7B7468; }
+  </style>
+</head>
+<body>
+  <button id="logout">Log out</button>
+  <div id="status">Ready</div>
+  <button id="talk">Talk</button>
+  <div id="response"></div>
+
+  <script>
+    const CONVERSATION_KEY = 'aside_conversation_id';
+    let conversationId = sessionStorage.getItem(CONVERSATION_KEY);
+    let recognition = null;
+    let isListening = false;
+
+    const status = document.getElementById('status');
+    const talkBtn = document.getElementById('talk');
+    const responseEl = document.getElementById('response');
+
+    // Session check on load
+    fetch('/auth/check')
+      .then(r => r.json())
+      .then(d => { if (!d.authenticated) window.location.href = '/'; });
+
+    // Logout
+    document.getElementById('logout').onclick = () => {
+      fetch('/auth/logout', { method: 'POST' })
+        .then(() => { window.location.href = '/'; });
+    };
+
+    async function sendToClaude(text) {
+      status.textContent = 'Thinking…';
+      const res = await fetch('/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, conversation_id: conversationId || undefined }),
+      });
+      const data = await res.json();
+      if (data.conversation_id) {
+        conversationId = data.conversation_id;
+        sessionStorage.setItem(CONVERSATION_KEY, conversationId);
+      }
+      return data.text || '';
+    }
+
+    async function speak(text) {
+      // Try Deepgram Aura TTS first
+      try {
+        const res = await fetch('/voice/speak', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text }),
+        });
+        if (res.ok) {
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          const audio = new Audio(url);
+          audio.onended = () => URL.revokeObjectURL(url);
+          await audio.play();
+          return;
+        }
+      } catch { /* fall through to browser TTS */ }
+      // Browser SpeechSynthesis fallback
+      const utt = new SpeechSynthesisUtterance(text);
+      speechSynthesis.speak(utt);
+    }
+
+    function startListening() {
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SR) {
+        status.textContent = 'Speech not supported — try Chrome or Safari';
+        return;
+      }
+      recognition = new SR();
+      recognition.lang = 'en-GB';
+      recognition.interimResults = false;
+      recognition.maxAlternatives = 1;
+
+      recognition.onstart = () => {
+        isListening = true;
+        talkBtn.textContent = 'Listening…';
+        talkBtn.classList.add('listening');
+        status.textContent = 'Listening';
+      };
+
+      recognition.onresult = async (event) => {
+        const transcript = event.results[0][0].transcript;
+        status.textContent = `You: ${transcript}`;
+        talkBtn.textContent = 'Talk';
+        talkBtn.classList.remove('listening');
+        try {
+          const reply = await sendToClaude(transcript);
+          responseEl.textContent = reply;
+          status.textContent = 'Ready';
+          await speak(reply);
+        } catch {
+          status.textContent = 'Error — try again';
+        }
+      };
+
+      recognition.onerror = (e) => {
+        status.textContent = `Error: ${e.error}`;
+        isListening = false;
+        talkBtn.textContent = 'Talk';
+        talkBtn.classList.remove('listening');
+      };
+
+      recognition.onend = () => {
+        isListening = false;
+        talkBtn.textContent = 'Talk';
+        talkBtn.classList.remove('listening');
+      };
+
+      recognition.start();
+    }
+
+    talkBtn.onclick = () => {
+      if (isListening) {
+        recognition?.stop();
+      } else {
+        startListening();
+      }
+    };
+  </script>
+</body>
+</html>
