@@ -1,31 +1,27 @@
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
+import session from "express-session";
+import path from "path";
+import { fileURLToPath } from "url";
 import { MCPManager } from "./mcp-manager.js";
 import { ClaudeClient } from "./claude-client.js";
 import { ConversationStore } from "./conversation.js";
 import { SkillLoader } from "./skill-loader.js";
-import { gatewayAuth, rateLimiter, RequestQueue } from "./middleware.js";
+import { gatewayAuth, rateLimiter, requireAuth, requireAnyAuth, RequestQueue } from "./middleware.js";
 import { showBanner, showServerInfo, c } from "./console-theme.js";
 import { createChatRouter } from "./routes/chat.js";
 import { createHealthRouter } from "./routes/health.js";
 import { createConfigRouter } from "./routes/config.js";
 import { createToolsRouter } from "./routes/tools.js";
+import { createAuthRouter } from "./routes/auth.js";
+import { createVoiceRouter } from "./routes/voice.js";
 import type { ServerConfig } from "./types.js";
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT || "18790", 10);
 
-const DEFAULT_SYSTEM_PROMPT = `You are Claude, an AI vision assistant seeing the world through the user's camera (iPhone or Meta Ray-Ban smart glasses) in real-time.
-
-VISION ANALYSIS:
-- You receive a live camera frame with each message. ALWAYS analyze the image carefully before responding.
-- Describe what you ACTUALLY see — objects, people, text, screens, environments, colors, brands, labels.
-- If you see text (signs, screens, labels, books), read it exactly.
-- If you see a product, identify it specifically (brand, model, color).
-- If you see a person, describe what they're doing, not who they are.
-- If you see a scene/environment, describe the setting, lighting, and notable elements.
-- NEVER guess or hallucinate. If you can't make something out clearly, say so.
-- Be specific and accurate. "I see a silver MacBook Pro on a wooden desk" not "I see a laptop on a table."
+const DEFAULT_SYSTEM_PROMPT = `You are Claude, an AI voice assistant for smart glasses.
 
 RESPONSE STYLE:
 - Keep responses concise (1-3 sentences for simple questions, more for detailed analysis).
@@ -34,84 +30,91 @@ RESPONSE STYLE:
 - Don't say "In the image I can see..." — just describe directly, like a friend would.
 
 TOOLS:
-- When the user asks you to do something that requires a tool (send email, check calendar, etc.), use the appropriate tool.
-- You can combine vision analysis with tool use (e.g., "read this business card and save the contact").`;
+- When the user asks you to do something that requires a tool (send email, check calendar, etc.), use the appropriate tool.`;
 
 async function main() {
-  // ── Show Banner ──
   showBanner();
 
-  // ── Initialize MCP Manager ──
   const mcpManager = new MCPManager();
   await mcpManager.initialize();
 
-  // ── Initialize Skill Loader ──
   const skillLoader = new SkillLoader();
   skillLoader.load();
 
-  // ── Build system prompt with skills ──
   const systemPrompt = DEFAULT_SYSTEM_PROMPT + skillLoader.buildSystemPromptSection();
 
-  // ── Server config ──
   const config: ServerConfig = {
     systemPrompt,
     model: process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514",
     maxTokens: 4096,
   };
 
-  // ── Initialize Claude Client ──
   const claudeClient = new ClaudeClient(mcpManager, config);
-
-  // ── Conversation store ──
   const conversations = new ConversationStore();
+  const requestQueue = new RequestQueue(2);
 
-  // ── Request queue (prevents concurrent Claude API races) ──
-  const requestQueue = new RequestQueue(2); // max 2 concurrent API calls
-
-  // ── Express app ──
   const app = express();
   app.use(cors());
   app.use(express.json({ limit: "50mb" }));
 
-  // ── Security middleware ──
-  app.use(gatewayAuth());    // Optional API key auth (set GATEWAY_API_KEY in .env)
-  app.use(rateLimiter(30));  // 30 requests per minute per IP
+  // ── Session ──
+  app.use(session({
+    name: "sid",
+    secret: process.env.SESSION_SECRET || process.env.ADMIN_PASSWORD || "aside-session-secret",
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",
+      maxAge: 24 * 60 * 60 * 1000, // 24 hours
+    },
+  }));
 
-  // ── Routes ──
-  app.use("/chat", createChatRouter(claudeClient, conversations, requestQueue));
+  // ── Public: static landing page ──
+  app.use(express.static(path.join(__dirname, "../public")));
+
+  // ── Public: auth endpoints ──
+  app.use("/auth", createAuthRouter());
+
+  // ── Public: health ──
   app.use("/health", createHealthRouter(mcpManager, conversations, skillLoader));
+
+  // ── Session-gated: voice chat page ──
+  app.get("/app", requireAuth, (_req, res) => {
+    res.sendFile(path.join(__dirname, "../public/app.html"));
+  });
+
+  // ── Rate limiter (applied to all API routes below) ──
+  app.use(rateLimiter(30));
+
+  // ── Session or gateway key: chat + voice ──
+  app.use("/chat", requireAnyAuth, createChatRouter(claudeClient, conversations, requestQueue));
+  app.use("/voice", requireAuth, createVoiceRouter());
+
+  // ── Gateway key only: native app admin routes ──
+  app.use(gatewayAuth());
   app.use("/config", createConfigRouter(claudeClient));
   app.use("/tools", createToolsRouter(mcpManager));
 
-  // Skills endpoint
   app.get("/skills", (_req, res) => {
-    res.json({
-      skills: skillLoader.getSkillList(),
-      count: skillLoader.count,
-    });
+    res.json({ skills: skillLoader.getSkillList(), count: skillLoader.count });
   });
 
-  // Skills reload endpoint
   app.post("/skills/reload", (_req, res) => {
     skillLoader.reload();
-    // Update system prompt with new skills
     const newPrompt = DEFAULT_SYSTEM_PROMPT + skillLoader.buildSystemPromptSection();
     claudeClient.updateConfig({ systemPrompt: newPrompt });
-    res.json({
-      message: "Skills reloaded",
-      skills: skillLoader.getSkillList(),
-      count: skillLoader.count,
-    });
+    res.json({ message: "Skills reloaded", skills: skillLoader.getSkillList(), count: skillLoader.count });
   });
 
-  // ── Start server ──
+  // ── Start ──
   const server = app.listen(PORT, "0.0.0.0", () => {
     const mcpServers = mcpManager.getServerNames();
     const toolCount = mcpManager.getToolsForClaude().length;
     showServerInfo(PORT, mcpServers.length, toolCount, skillLoader.count);
   });
 
-  // ── Graceful shutdown ──
   const shutdown = async () => {
     console.log(c.orange("\n   ▸ Shutting down VisionClaude Gateway..."));
     conversations.destroy();
