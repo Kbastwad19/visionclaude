@@ -65,7 +65,7 @@ export function createVoiceRouter() {
               "Content-Type":
                 (req.headers["content-type"] as string) || "audio/webm",
             },
-            body: new Blob([req.body as Buffer]),
+            body: req.body as any,
           }
         );
 
