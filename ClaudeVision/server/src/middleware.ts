@@ -1,6 +1,13 @@
 import type { Request, Response, NextFunction } from "express";
 import { c } from "./console-theme.js";
 
+// Extend express-session with our custom fields
+declare module "express-session" {
+  interface SessionData {
+    authenticated: boolean;
+  }
+}
+
 // ── Gateway Auth Middleware ──────────────────────────────────────────
 // Optional API key auth. If GATEWAY_API_KEY is set in .env, all
 // non-health endpoints require it via X-Gateway-Key header.
@@ -152,4 +159,32 @@ export function rateLimiter(
 
     next();
   };
+}
+
+// ── Session Auth Middleware ──────────────────────────────────────────
+// Requires a valid session (web client login via ADMIN_PASSWORD).
+
+export function requireAuth(req: Request, res: Response, next: NextFunction): void {
+  if (req.session?.authenticated) {
+    next();
+    return;
+  }
+  res.status(401).json({ error: "Unauthorized — please log in" });
+}
+
+// ── Combined Auth Middleware ─────────────────────────────────────────
+// Accepts either a valid session cookie (web client) or X-Gateway-Key
+// header (native iOS/Android app). Allows both paths to use /chat.
+
+export function requireAnyAuth(req: Request, res: Response, next: NextFunction): void {
+  if (req.session?.authenticated) {
+    next();
+    return;
+  }
+  const gatewayKey = process.env.GATEWAY_API_KEY || "";
+  if (!gatewayKey || req.headers["x-gateway-key"] === gatewayKey) {
+    next();
+    return;
+  }
+  res.status(401).json({ error: "Unauthorized" });
 }
