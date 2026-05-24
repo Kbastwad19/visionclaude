@@ -26,6 +26,49 @@
       letter-spacing: 0.08em;
       text-transform: uppercase;
     }
+    #preview-wrap {
+      width: 240px;
+      height: 180px;
+      border-radius: 16px;
+      overflow: hidden;
+      background: #1A1714;
+      border: 1px solid #D9D1C0;
+      margin-bottom: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+    #preview {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1);
+    }
+    #preview.env { transform: none; }
+    #preview-placeholder {
+      color: #7B7468;
+      font-size: 12px;
+      font-family: ui-monospace, monospace;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      text-align: center;
+      padding: 0 16px;
+    }
+    #vision-badge {
+      position: absolute;
+      top: 8px;
+      left: 8px;
+      background: rgba(26,23,20,0.6);
+      color: #6FE3A8;
+      font-family: ui-monospace, monospace;
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 4px 8px;
+      border-radius: 999px;
+    }
+    #vision-badge.off { color: #7B7468; }
     #talk {
       width: 120px;
       height: 120px;
@@ -75,6 +118,12 @@
 </head>
 <body>
   <button id="logout">Log out</button>
+  <div id="preview-wrap">
+    <video id="preview" autoplay playsinline muted></video>
+    <div id="preview-placeholder">Tap Talk to enable camera</div>
+    <div id="vision-badge" class="off">Vision off</div>
+  </div>
+  <canvas id="snap" hidden></canvas>
   <div id="status">Ready</div>
   <button id="talk">Talk</button>
   <div id="response"></div>
@@ -84,10 +133,61 @@
     let conversationId = sessionStorage.getItem(CONVERSATION_KEY);
     let recognition = null;
     let isListening = false;
+    let videoStream = null;
+    let usingFacingMode = 'environment';
 
     const status = document.getElementById('status');
     const talkBtn = document.getElementById('talk');
     const responseEl = document.getElementById('response');
+    const previewEl = document.getElementById('preview');
+    const placeholderEl = document.getElementById('preview-placeholder');
+    const visionBadge = document.getElementById('vision-badge');
+
+    async function ensureCamera() {
+      if (videoStream) return true;
+      if (!navigator.mediaDevices?.getUserMedia) return false;
+      // Try rear camera first, fall back to whatever's available (front, laptop webcam)
+      const attempts = [
+        { video: { facingMode: { exact: 'environment' } }, audio: false },
+        { video: { facingMode: 'environment' }, audio: false },
+        { video: true, audio: false },
+      ];
+      for (const constraints of attempts) {
+        try {
+          videoStream = await navigator.mediaDevices.getUserMedia(constraints);
+          previewEl.srcObject = videoStream;
+          const track = videoStream.getVideoTracks()[0];
+          const settings = track?.getSettings?.() || {};
+          usingFacingMode = settings.facingMode || 'environment';
+          // Front-facing cameras look natural mirrored; rear should not be mirrored
+          previewEl.classList.toggle('env', usingFacingMode === 'environment');
+          placeholderEl.style.display = 'none';
+          visionBadge.textContent = usingFacingMode === 'environment' ? 'Vision on' : 'Vision on · front';
+          visionBadge.classList.remove('off');
+          return true;
+        } catch (err) {
+          // Try next constraint set
+          console.warn('[camera] attempt failed', constraints, err.name);
+        }
+      }
+      placeholderEl.textContent = 'Camera unavailable — voice only';
+      visionBadge.textContent = 'Voice only';
+      return false;
+    }
+
+    function captureFrame() {
+      if (!videoStream || !previewEl.videoWidth) return null;
+      const canvas = document.getElementById('snap');
+      // Cap longest edge at 1280 to keep payloads small
+      const maxEdge = 1280;
+      const scale = Math.min(1, maxEdge / Math.max(previewEl.videoWidth, previewEl.videoHeight));
+      canvas.width = Math.round(previewEl.videoWidth * scale);
+      canvas.height = Math.round(previewEl.videoHeight * scale);
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(previewEl, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      return dataUrl.replace(/^data:image\/jpeg;base64,/, '');
+    }
 
     // Session check on load
     fetch('/auth/check')
@@ -100,12 +200,14 @@
         .then(() => { window.location.href = '/'; });
     };
 
-    async function sendToClaude(text) {
+    async function sendToClaude(text, imageBase64) {
       status.textContent = 'Thinking…';
+      const body = { text, conversation_id: conversationId || undefined };
+      if (imageBase64) body.images = [imageBase64];
       const res = await fetch('/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, conversation_id: conversationId || undefined }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (data.conversation_id) {
@@ -160,8 +262,9 @@
         status.textContent = `You: ${transcript}`;
         talkBtn.textContent = 'Talk';
         talkBtn.classList.remove('listening');
+        const frame = captureFrame();
         try {
-          const reply = await sendToClaude(transcript);
+          const reply = await sendToClaude(transcript, frame);
           responseEl.textContent = reply;
           status.textContent = 'Ready';
           await speak(reply);
@@ -186,12 +289,15 @@
       recognition.start();
     }
 
-    talkBtn.onclick = () => {
+    talkBtn.onclick = async () => {
       if (isListening) {
         recognition?.stop();
-      } else {
-        startListening();
+        return;
       }
+      // Request camera inside the user gesture (required by iOS Safari).
+      // Fire and forget — listening starts even if the camera is denied.
+      ensureCamera();
+      startListening();
     };
   </script>
 </body>
