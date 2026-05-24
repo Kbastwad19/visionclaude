@@ -64,13 +64,20 @@
     }
     #preview.env { transform: none; }
     #preview-placeholder {
-      color: #7B7468;
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #B8B0A0;
       font-size: 12px;
       font-family: ui-monospace, monospace;
-      letter-spacing: 0.08em;
+      letter-spacing: 0.06em;
       text-transform: uppercase;
       text-align: center;
       padding: 0 16px;
+      line-height: 1.4;
+      pointer-events: none;
     }
     #vision-badge {
       position: absolute;
