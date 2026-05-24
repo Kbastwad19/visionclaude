@@ -5,6 +5,7 @@ import {
   countUsers,
   getUserKeyStatus,
   signupWithInvite,
+  isValidEmail,
 } from "../users.js";
 
 export function createAuthRouter(): Router {
@@ -15,6 +16,10 @@ export function createAuthRouter(): Router {
     const { email, password } = req.body as { email?: string; password?: string };
     if (!email || !password) {
       res.status(400).json({ error: "email and password are required" });
+      return;
+    }
+    if (!isValidEmail(email)) {
+      res.status(401).json({ error: "Incorrect email or password" });
       return;
     }
     const user = authenticate(email, password);
@@ -100,6 +105,10 @@ export function createAuthRouter(): Router {
       res
         .status(400)
         .json({ error: "token, email and password are required" });
+      return;
+    }
+    if (!isValidEmail(email)) {
+      res.status(400).json({ error: "Invalid email address" });
       return;
     }
     if (password.length < 8) {
