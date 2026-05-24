@@ -213,21 +213,60 @@ export function revokeInvite(token: string): boolean {
   return r.changes > 0;
 }
 
-// Returns the invite if it exists, is unused, and not expired. Otherwise null.
-export function consumeInvite(
+// Atomically claim an invite + create the user in a single transaction.
+// The invite is consumed via a conditional UPDATE that requires used_by IS
+// NULL at write time, so two concurrent signups racing on the same token
+// cannot both succeed — the second sees changes = 0 and the transaction
+// rolls back, leaving no orphan user behind. Same applies when the email
+// is already taken (UNIQUE constraint triggers a rollback that also
+// re-frees the invite).
+export type SignupResult =
+  | { ok: true; user: User }
+  | { ok: false; reason: "invalid_invite" | "email_taken" };
+
+export function signupWithInvite(
   token: string,
-  newUserId: string
-): InviteRow | null {
+  email: string,
+  password: string
+): SignupResult {
   const db = getDb();
+  const userId = uuidv4();
   const now = Date.now();
-  const row = db
-    .prepare(
-      "SELECT * FROM invites WHERE token = ? AND used_by IS NULL AND expires_at > ?"
-    )
-    .get(token, now) as InviteRow | undefined;
-  if (!row) return null;
-  db.prepare(
-    "UPDATE invites SET used_by = ?, used_at = ? WHERE token = ?"
-  ).run(newUserId, now, token);
-  return row;
+  const normalizedEmail = email.toLowerCase();
+  const passwordHash = hashPassword(password);
+
+  const claimInvite = db.prepare(
+    `UPDATE invites
+     SET used_by = ?, used_at = ?
+     WHERE token = ? AND used_by IS NULL AND expires_at > ?`
+  );
+  const insertUser = db.prepare(
+    `INSERT INTO users (id, email, password_hash, is_admin, created_at)
+     VALUES (?, ?, ?, 0, ?)`
+  );
+
+  const run = db.transaction(() => {
+    const r = claimInvite.run(userId, now, token, now);
+    if (r.changes === 0) {
+      // Sentinel — caught below and translated to a structured result.
+      const e = new Error("INVALID_INVITE");
+      (e as Error & { code?: string }).code = "INVALID_INVITE";
+      throw e;
+    }
+    insertUser.run(userId, normalizedEmail, passwordHash, now);
+  });
+
+  try {
+    run();
+    return {
+      ok: true,
+      user: { id: userId, email: normalizedEmail, isAdmin: false, createdAt: now },
+    };
+  } catch (err) {
+    const code = (err as { code?: string })?.code;
+    if (code === "INVALID_INVITE") return { ok: false, reason: "invalid_invite" };
+    if (code === "SQLITE_CONSTRAINT_UNIQUE")
+      return { ok: false, reason: "email_taken" };
+    throw err;
+  }
 }

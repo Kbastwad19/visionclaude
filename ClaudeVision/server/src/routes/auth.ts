@@ -1,12 +1,10 @@
 import { Router } from "express";
 import {
   authenticate,
-  consumeInvite,
-  createUser,
   findUserById,
-  findUserByEmail,
   countUsers,
   getUserKeyStatus,
+  signupWithInvite,
 } from "../users.js";
 
 export function createAuthRouter(): Router {
@@ -77,27 +75,29 @@ export function createAuthRouter(): Router {
       res.status(400).json({ error: "Password must be at least 8 characters" });
       return;
     }
-    if (findUserByEmail(email)) {
-      res.status(409).json({ error: "Email is already registered" });
+    // Atomic: claim the invite + create the user in one transaction. If the
+    // invite is invalid/expired/already used, the user is NOT created (so
+    // we can't be bypassed by ignoring a 400 and logging in afterwards).
+    // If two requests race on the same token, only one wins.
+    const result = signupWithInvite(token, email, password);
+    if (!result.ok) {
+      if (result.reason === "email_taken") {
+        res.status(409).json({ error: "Email is already registered" });
+      } else {
+        res
+          .status(400)
+          .json({ error: "Invite is invalid, expired, or already used" });
+      }
       return;
     }
-    const user = createUser({ email, password });
-    const invite = consumeInvite(token, user.id);
-    if (!invite) {
-      // Roll back the user we just created — this is a race-condition
-      // safety net; consumeInvite already filtered by !used and !expired.
-      // In practice we just hit "invalid invite" before user creation.
-      res.status(400).json({ error: "Invite is invalid, expired, or already used" });
-      return;
-    }
-    req.session.userId = user.id;
-    req.session.isAdmin = user.isAdmin;
+    req.session.userId = result.user.id;
+    req.session.isAdmin = result.user.isAdmin;
     req.session.save((err) => {
       if (err) {
         res.status(500).json({ error: "Session error" });
         return;
       }
-      res.json({ ok: true, user });
+      res.json({ ok: true, user: result.user });
     });
   });
 
