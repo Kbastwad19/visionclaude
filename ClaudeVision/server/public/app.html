@@ -114,10 +114,9 @@
       min-height: 48px;
       padding: 0 24px;
     }
-    #logout {
+    #logout, #diag-open {
       position: fixed;
       top: 20px;
-      right: 24px;
       background: transparent;
       border: 1px solid #D9D1C0;
       color: #7B7468;
@@ -127,11 +126,119 @@
       border-radius: 999px;
       cursor: pointer;
     }
-    #logout:hover { border-color: #7B7468; }
+    #logout { right: 24px; }
+    #diag-open { right: 116px; }
+    #logout:hover, #diag-open:hover { border-color: #7B7468; }
+    #diag-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(26,23,20,0.55);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      padding: 16px;
+    }
+    #diag-overlay.open { display: flex; }
+    #diag-panel {
+      background: #F4EFE5;
+      border: 1px solid #D9D1C0;
+      border-radius: 20px;
+      width: 100%;
+      max-width: 520px;
+      max-height: 80vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    #diag-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px;
+      border-bottom: 1px solid #D9D1C0;
+    }
+    #diag-header h2 {
+      font-size: 14px;
+      font-weight: 600;
+      font-family: ui-monospace, monospace;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #1A1714;
+    }
+    #diag-list {
+      overflow-y: auto;
+      padding: 8px 0;
+      flex: 1;
+    }
+    .diag-row {
+      padding: 12px 20px;
+      border-bottom: 1px solid rgba(217,209,192,0.5);
+      display: grid;
+      grid-template-columns: 16px 1fr;
+      gap: 10px;
+      align-items: start;
+    }
+    .diag-row:last-child { border-bottom: none; }
+    .diag-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      margin-top: 5px;
+    }
+    .diag-dot.ok { background: #2F8A57; }
+    .diag-dot.err { background: #C25A2B; }
+    .diag-dot.unk { background: #A39A8C; }
+    .diag-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: #1A1714;
+    }
+    .diag-detail {
+      font-size: 11px;
+      font-family: ui-monospace, monospace;
+      color: #7B7468;
+      margin-top: 3px;
+      word-break: break-all;
+    }
+    #diag-footer {
+      display: flex;
+      gap: 8px;
+      padding: 12px 20px;
+      border-top: 1px solid #D9D1C0;
+    }
+    #diag-footer button {
+      flex: 1;
+      background: transparent;
+      border: 1px solid #D9D1C0;
+      color: #1A1714;
+      font-family: 'Inter Tight', sans-serif;
+      font-size: 13px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      cursor: pointer;
+    }
+    #diag-footer button.primary { background: #1A1714; color: #6FE3A8; border-color: #1A1714; }
   </style>
 </head>
 <body>
+  <button id="diag-open">Diagnostics</button>
   <button id="logout">Log out</button>
+
+  <div id="diag-overlay" role="dialog" aria-modal="true">
+    <div id="diag-panel">
+      <div id="diag-header">
+        <h2>Diagnostics</h2>
+        <button id="diag-close" style="background:transparent;border:none;color:#7B7468;font-size:20px;cursor:pointer;line-height:1;padding:4px 8px">×</button>
+      </div>
+      <div id="diag-list"></div>
+      <div id="diag-footer">
+        <button id="diag-refresh">Re-run</button>
+        <button id="diag-copy" class="primary">Copy</button>
+      </div>
+    </div>
+  </div>
+
   <div id="preview-wrap">
     <video id="preview" autoplay playsinline muted></video>
     <div id="preview-placeholder">Tap Talk to enable camera</div>
@@ -255,21 +362,41 @@
         .then(() => { window.location.href = '/'; });
     };
 
+    let lastChat = null;
+
     async function sendToClaude(text, imageBase64) {
       status.textContent = 'Thinking…';
       const body = { text, conversation_id: conversationId || undefined };
       if (imageBase64) body.images = [imageBase64];
-      const res = await fetch('/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json();
-      if (data.conversation_id) {
+      const t0 = performance.now();
+      let res, data, err;
+      try {
+        res = await fetch('/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        data = await res.json();
+      } catch (e) {
+        err = e;
+      }
+      const ms = Math.round(performance.now() - t0);
+      lastChat = {
+        ok: !!res?.ok,
+        status: res?.status ?? 0,
+        ms,
+        replyLen: (data?.text || '').length,
+        toolCalls: data?.tool_calls?.length || 0,
+        hadImage: !!imageBase64,
+        imageBytes: imageBase64 ? Math.round(imageBase64.length * 0.75) : 0,
+        error: err ? String(err) : (data?.error || null),
+      };
+      if (err) throw err;
+      if (data?.conversation_id) {
         conversationId = data.conversation_id;
         sessionStorage.setItem(CONVERSATION_KEY, conversationId);
       }
-      return data.text || '';
+      return data?.text || '';
     }
 
     async function speak(text) {
@@ -353,6 +480,157 @@
       // Fire and forget — listening starts even if the camera is denied.
       ensureCamera();
       startListening();
+    };
+
+    // ── Diagnostics panel ──────────────────────────────────────────────
+    const diagOverlay = document.getElementById('diag-overlay');
+    const diagList = document.getElementById('diag-list');
+    let lastDiagRows = [];
+
+    function renderDiag(rows) {
+      lastDiagRows = rows;
+      diagList.innerHTML = '';
+      for (const [label, state, detail] of rows) {
+        const row = document.createElement('div');
+        row.className = 'diag-row';
+        const dot = document.createElement('div');
+        dot.className = 'diag-dot ' + (state === true ? 'ok' : state === false ? 'err' : 'unk');
+        const body = document.createElement('div');
+        const l = document.createElement('div'); l.className = 'diag-label'; l.textContent = label;
+        const d = document.createElement('div'); d.className = 'diag-detail'; d.textContent = detail || '';
+        body.appendChild(l); if (detail) body.appendChild(d);
+        row.appendChild(dot); row.appendChild(body);
+        diagList.appendChild(row);
+      }
+    }
+
+    async function runDiagnostics() {
+      const rows = [];
+      rows.push(['Secure context (HTTPS)', window.isSecureContext, window.location.protocol + '//' + window.location.host]);
+      rows.push(['getUserMedia available', !!navigator.mediaDevices?.getUserMedia,
+        navigator.mediaDevices?.getUserMedia ? 'yes' : 'no — browser does not expose it']);
+      rows.push(['SpeechRecognition available',
+        !!(window.SpeechRecognition || window.webkitSpeechRecognition),
+        (window.SpeechRecognition || window.webkitSpeechRecognition) ? 'yes (webkit/standard)' : 'no — try Chrome or Safari']);
+
+      // Permissions API
+      if (navigator.permissions?.query) {
+        for (const name of ['camera', 'microphone']) {
+          try {
+            const r = await navigator.permissions.query({ name });
+            rows.push([`Permission · ${name}`, r.state === 'granted', r.state]);
+          } catch {
+            rows.push([`Permission · ${name}`, null, 'query not supported']);
+          }
+        }
+      } else {
+        rows.push(['Permissions API', null, 'not exposed by this browser']);
+      }
+
+      // Active camera stream
+      if (videoStream) {
+        const track = videoStream.getVideoTracks()[0];
+        const s = track?.getSettings?.() || {};
+        rows.push(['Camera stream', track?.readyState === 'live',
+          `${s.width || '?'}×${s.height || '?'} · facing ${s.facingMode || '?'} · ${track?.label || 'no label'}`]);
+      } else {
+        rows.push(['Camera stream', false, 'not started — tap Talk once to start']);
+      }
+
+      // Permissions-Policy header on a real backend request (catches Plesk default headers)
+      try {
+        const r = await fetch('/health', { cache: 'no-store' });
+        const pp = r.headers.get('Permissions-Policy');
+        const fp = r.headers.get('Feature-Policy');
+        const policy = pp || fp;
+        const blocksCamera = policy ? /camera\s*=\s*\(\s*\)/i.test(policy) : false;
+        rows.push(['Permissions-Policy header', !blocksCamera, policy ? policy : 'not set (good)']);
+      } catch (e) {
+        rows.push(['Permissions-Policy header', null, 'could not read — ' + e.message]);
+      }
+
+      // Health
+      try {
+        const r = await fetch('/health', { cache: 'no-store' });
+        const j = await r.json();
+        const servers = j.mcp?.servers?.length ?? 0;
+        const tools = j.mcp?.totalTools ?? 0;
+        const skills = j.skills?.count ?? 0;
+        const upMin = Math.round((j.uptime || 0) / 60);
+        rows.push(['Backend /health', j.status === 'ok',
+          `up ${upMin}m · MCP servers=${servers} · tools=${tools} · skills=${skills} · convs=${j.conversations ?? 0}`]);
+      } catch (e) {
+        rows.push(['Backend /health', false, 'fetch failed — ' + e.message]);
+      }
+
+      // Auth
+      try {
+        const r = await fetch('/auth/check', { cache: 'no-store' });
+        const j = await r.json();
+        rows.push(['Session authenticated', !!j.authenticated, JSON.stringify(j)]);
+      } catch (e) {
+        rows.push(['Session authenticated', null, 'check failed — ' + e.message]);
+      }
+
+      // Conversation
+      rows.push(['Conversation ID', !!conversationId, conversationId || 'none yet — will be assigned on first /chat']);
+
+      // Last chat call
+      if (lastChat) {
+        rows.push(['Last /chat request', lastChat.ok,
+          `HTTP ${lastChat.status} · ${lastChat.ms}ms · reply ${lastChat.replyLen} chars · tools=${lastChat.toolCalls} · image=${lastChat.hadImage ? lastChat.imageBytes + 'B' : 'no'}${lastChat.error ? ' · err=' + lastChat.error : ''}`]);
+      } else {
+        rows.push(['Last /chat request', null, 'no requests yet']);
+      }
+
+      // TTS reachability — empty text returns 400 without burning a Deepgram credit
+      try {
+        const r = await fetch('/voice/speak', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: '' }),
+        });
+        let detail, state;
+        if (r.status === 400)       { detail = 'reachable (route validated empty input)'; state = true; }
+        else if (r.status === 503)  { detail = 'DEEPGRAM_API_KEY not set — browser SpeechSynthesis fallback in use'; state = null; }
+        else if (r.status === 401)  { detail = 'unauthorized — session invalid'; state = false; }
+        else                        { detail = `HTTP ${r.status}`; state = r.ok; }
+        rows.push(['Server TTS (/voice/speak)', state, detail]);
+      } catch (e) {
+        rows.push(['Server TTS (/voice/speak)', null, 'unreachable — ' + e.message]);
+      }
+
+      // Vision status text (live UI state)
+      rows.push(['Vision status (UI)', null, visionStatus.textContent || '(empty)']);
+
+      // UA / size
+      rows.push(['User agent', null, navigator.userAgent]);
+      rows.push(['Viewport', null, `${window.innerWidth}×${window.innerHeight} · DPR ${window.devicePixelRatio}`]);
+
+      renderDiag(rows);
+    }
+
+    document.getElementById('diag-open').onclick = () => {
+      diagOverlay.classList.add('open');
+      runDiagnostics();
+    };
+    document.getElementById('diag-close').onclick = () => diagOverlay.classList.remove('open');
+    diagOverlay.onclick = (e) => { if (e.target === diagOverlay) diagOverlay.classList.remove('open'); };
+    document.getElementById('diag-refresh').onclick = runDiagnostics;
+    document.getElementById('diag-copy').onclick = async () => {
+      const text = lastDiagRows.map(([l, s, d]) => `${s === true ? 'OK ' : s === false ? 'FAIL' : '?  '} ${l}${d ? '\n     ' + d : ''}`).join('\n');
+      const btn = document.getElementById('diag-copy');
+      try {
+        await navigator.clipboard.writeText(text);
+        const orig = btn.textContent; btn.textContent = 'Copied!';
+        setTimeout(() => { btn.textContent = orig; }, 1200);
+      } catch {
+        // Fallback: select a hidden textarea
+        const ta = document.createElement('textarea');
+        ta.value = text; document.body.appendChild(ta); ta.select();
+        try { document.execCommand('copy'); btn.textContent = 'Copied!'; setTimeout(() => btn.textContent = 'Copy', 1200); } catch {}
+        document.body.removeChild(ta);
+      }
     };
   </script>
 </body>
