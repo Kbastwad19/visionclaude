@@ -66,8 +66,8 @@ async function main() {
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
+      secure: false, // Nginx handles HTTPS at the edge
+      sameSite: "lax",
       maxAge: 24 * 60 * 60 * 1000, // 24 hours
     },
   }));
@@ -81,8 +81,8 @@ async function main() {
   // ── Public: health ──
   app.use("/health", createHealthRouter(mcpManager, conversations, skillLoader));
 
-  // ── Session-gated: voice chat page ──
-  app.get("/app", requireAuth, (_req, res) => {
+  // ── Voice chat page (client-side auth check in app.html) ──
+  app.get("/app", (_req, res) => {
     res.sendFile(path.join(__dirname, "../public/app.html"));
   });
 

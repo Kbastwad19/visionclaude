@@ -14,7 +14,13 @@ export function createAuthRouter() {
 
     if (password === adminPassword) {
       req.session.authenticated = true;
-      res.json({ ok: true });
+      req.session.save((err) => {
+        if (err) {
+          res.status(500).json({ error: "Session error" });
+          return;
+        }
+        res.json({ ok: true });
+      });
     } else {
       res.status(401).json({ error: "Incorrect password" });
     }
