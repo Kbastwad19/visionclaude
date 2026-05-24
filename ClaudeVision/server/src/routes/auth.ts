@@ -37,5 +37,15 @@ export function createAuthRouter() {
     res.json({ authenticated: !!req.session.authenticated });
   });
 
+  // Temporary debug endpoint — remove after login is confirmed working
+  router.get("/debug", (req, res) => {
+    res.json({
+      sessionID: req.sessionID,
+      session: req.session,
+      cookies: req.headers.cookie || "none",
+      authenticated: !!req.session.authenticated,
+    });
+  });
+
   return router;
 }
