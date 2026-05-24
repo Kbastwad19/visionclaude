@@ -257,6 +257,7 @@
     let isListening = false;
     let videoStream = null;
     let usingFacingMode = 'environment';
+    let cameraReadyPromise = null;
 
     const status = document.getElementById('status');
     const talkBtn = document.getElementById('talk');
@@ -299,7 +300,59 @@
       placeholderEl.textContent = 'Not supported';
     }
 
+    function streamIsLive(stream) {
+      const track = stream?.getVideoTracks?.()[0];
+      if (!track) return false;
+      if (track.readyState !== 'live') return false;
+      // `active` is false once all tracks have ended on most browsers
+      if (stream.active === false) return false;
+      return true;
+    }
+
+    function teardownStream() {
+      try { videoStream?.getTracks().forEach(t => t.stop()); } catch {}
+      videoStream = null;
+      try { previewEl.srcObject = null; } catch {}
+    }
+
+    function awaitVideoReady(video, timeoutMs = 3000) {
+      // Resolve once the <video> reports non-zero dimensions, so the first
+      // captureFrame() call doesn't draw a 0x0 canvas. iOS Safari fires
+      // loadedmetadata after attaching srcObject; without this the first
+      // utterance after enabling the camera silently goes text-only.
+      return new Promise((resolve) => {
+        if (video.videoWidth > 0 && video.videoHeight > 0) return resolve(true);
+        let settled = false;
+        const finish = (ok) => {
+          if (settled) return;
+          settled = true;
+          video.removeEventListener('loadedmetadata', onMeta);
+          video.removeEventListener('loadeddata', onMeta);
+          clearTimeout(timer);
+          resolve(ok);
+        };
+        const onMeta = () => { if (video.videoWidth > 0 && video.videoHeight > 0) finish(true); };
+        video.addEventListener('loadedmetadata', onMeta);
+        video.addEventListener('loadeddata', onMeta);
+        const timer = setTimeout(() => finish(false), timeoutMs);
+      });
+    }
+
+    function handleTrackEnded() {
+      // Track died mid-session (backgrounding, another app grabbed the camera,
+      // user pulled down Control Center). Drop the stale stream so the next
+      // ensureCamera() call reacquires instead of returning a dead handle.
+      teardownStream();
+      visionBadge.textContent = 'Vision lost';
+      visionBadge.classList.add('off', 'err');
+      placeholderEl.style.display = '';
+      placeholderEl.textContent = 'Camera stopped — tap Talk to retry';
+      setVisionStatus('Camera stream ended — will retry on next tap', 'err');
+    }
+
     async function ensureCamera() {
+      // Stale stream check: cached track may have ended while backgrounded.
+      if (videoStream && !streamIsLive(videoStream)) teardownStream();
       if (videoStream) return true;
       if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) return false;
       // Try rear camera first, fall back to whatever's available (front, laptop webcam)
@@ -314,6 +367,8 @@
           videoStream = await navigator.mediaDevices.getUserMedia(constraints);
           previewEl.srcObject = videoStream;
           const track = videoStream.getVideoTracks()[0];
+          track?.addEventListener('ended', handleTrackEnded);
+          const ready = await awaitVideoReady(previewEl, 3000);
           const settings = track?.getSettings?.() || {};
           usingFacingMode = settings.facingMode || 'environment';
           // Front-facing cameras look natural mirrored; rear should not be mirrored
@@ -322,7 +377,11 @@
           visionBadge.textContent = usingFacingMode === 'environment' ? 'Vision on' : 'Vision on · front';
           visionBadge.classList.remove('off');
           visionBadge.classList.remove('err');
-          setVisionStatus(`Vision on · ${usingFacingMode} camera`, 'ok');
+          if (ready) {
+            setVisionStatus(`Vision on · ${usingFacingMode} camera`, 'ok');
+          } else {
+            setVisionStatus('Camera open but metadata not ready yet — first frame may be skipped', 'err');
+          }
           return true;
         } catch (err) {
           lastErr = err;
@@ -338,7 +397,14 @@
     }
 
     function captureFrame() {
-      if (!videoStream || !previewEl.videoWidth) return null;
+      if (!streamIsLive(videoStream)) {
+        console.warn('[camera] capture skipped — stream not live');
+        return null;
+      }
+      if (!previewEl.videoWidth || !previewEl.videoHeight) {
+        console.warn('[camera] capture skipped — video dimensions not ready');
+        return null;
+      }
       const canvas = document.getElementById('snap');
       // Cap longest edge at 1280 to keep payloads small
       const maxEdge = 1280;
@@ -444,6 +510,9 @@
         status.textContent = `You: ${transcript}`;
         talkBtn.textContent = 'Talk';
         talkBtn.classList.remove('listening');
+        // Wait for the in-flight ensureCamera() (if any) so the first utterance
+        // after enabling the camera doesn't capture before loadedmetadata fires.
+        if (cameraReadyPromise) { try { await cameraReadyPromise; } catch {} }
         const frame = captureFrame();
         try {
           const reply = await sendToClaude(transcript, frame);
@@ -477,8 +546,8 @@
         return;
       }
       // Request camera inside the user gesture (required by iOS Safari).
-      // Fire and forget — listening starts even if the camera is denied.
-      ensureCamera();
+      // Track the promise so onresult can await it before captureFrame().
+      cameraReadyPromise = ensureCamera().finally(() => { cameraReadyPromise = null; });
       startListening();
     };
 
