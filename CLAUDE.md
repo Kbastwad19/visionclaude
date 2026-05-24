@@ -93,6 +93,19 @@ When adding a new camera input, conform to `FrameSource` rather than duplicating
 - **Ports** — 18790 everywhere. Don't change this casually; the iOS app, dashboard, Docker bind, and `.mcp.json` examples all assume it.
 - **Branch policy for this work** — develop on `claude/claude-md-docs-KiRXd` (per the harness instructions for this session), commit and push there, do not open PRs unless asked.
 
+## Security model (Gateway)
+
+Key invariants — do not weaken these without a security review:
+
+- **`SESSION_SECRET`** — must be set in `.env` (64 hex chars from `openssl rand -hex 32`). Server refuses to start without it. A missing secret produces forge-able session cookies.
+- **`KEYS_ENCRYPTION_KEY`** — AES-256-GCM master key for all user API keys at rest. Server starts without it but storing any key will throw. Never rotate without re-encrypting the DB.
+- **Auth rate limiting** — `/auth` endpoints are limited to 5 requests/min per IP (brute-force protection), independent of the general 30/min API limit in `rateLimiter()`.
+- **CORS** — disabled for cross-origin requests by default. Set `CORS_ORIGINS=https://your-domain.com` to allow specific origins.
+- **Content-Security-Policy** — HTML pages served via `sendHtml()` in `index.ts` include a CSP allowing only self + Google Fonts. Inline `<script>` and `<style>` are permitted (`'unsafe-inline'`) because the pages use inline JS; avoid adding `eval()` or dynamic script injection.
+- **Email validation** — `isValidEmail()` in `users.ts` is enforced server-side on all signup and login paths. The regex is intentionally simple (not RFC-5321 exhaustive); it rejects obvious injections and oversized inputs.
+- **`innerHTML` ban** — user-supplied data (email, invite token, etc.) must be inserted via `textContent` or DOM methods, never `innerHTML`. The only `innerHTML` in account.html renders safe strings from the server's own JSON fields — do not extend this pattern.
+- **`/health` verbosity** — the public health endpoint returns only counts (server count, tool count, skill count), not names or conversation details, to limit capability disclosure.
+
 ## Things that look like bugs but aren't
 
 - `secure: false` on the session cookie — Nginx terminates HTTPS at the edge; the app speaks HTTP behind it.

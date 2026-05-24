@@ -177,7 +177,14 @@
       const data = await res.json();
       if (!data.authenticated) { window.location.href = '/'; return; }
       me = data.user;
-      $('me').innerHTML = `${data.user.email}${data.user.isAdmin ? ' <span style="color:#6FE3A8">· admin</span>' : ''}`;
+      const meEl = $('me');
+      meEl.textContent = data.user.email;
+      if (data.user.isAdmin) {
+        const badge = document.createElement('span');
+        badge.style.color = '#6FE3A8';
+        badge.textContent = ' · admin';
+        meEl.appendChild(badge);
+      }
       applyKeyState('anthropic', data.keys?.anthropic, data.effectiveKeys?.anthropic);
       applyKeyState('deepgram', data.keys?.deepgram, data.effectiveKeys?.deepgram);
       applyKeyState('openai', data.keys?.openai, data.effectiveKeys?.openai);

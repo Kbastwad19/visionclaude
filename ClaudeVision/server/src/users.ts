@@ -10,6 +10,12 @@ import {
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
+// MEDIUM: Validate email format server-side before any DB operation.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+export function isValidEmail(email: string): boolean {
+  return typeof email === "string" && email.length <= 254 && EMAIL_RE.test(email);
+}
+
 export interface User {
   id: string;
   email: string;
@@ -115,6 +121,7 @@ export interface CreateUserInput {
 }
 
 export function createUser(input: CreateUserInput): User {
+  if (!isValidEmail(input.email)) throw new Error("Invalid email address");
   const db = getDb();
   const id = uuidv4();
   const now = Date.now();
@@ -266,6 +273,7 @@ export function signupWithInvite(
   email: string,
   password: string
 ): SignupResult {
+  if (!isValidEmail(email)) return { ok: false, reason: "invalid_invite" };
   const db = getDb();
   const userId = uuidv4();
   const now = Date.now();

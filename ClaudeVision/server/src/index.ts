@@ -1,5 +1,5 @@
 import "dotenv/config";
-import express from "express";
+import express, { type Request, type Response } from "express";
 import cors from "cors";
 import session from "express-session";
 import path from "path";
@@ -25,6 +25,25 @@ import type { ServerConfig } from "./types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT || "18790", 10);
+
+// LOW: HTML pages get a Content-Security-Policy in addition to the global headers.
+// Google Fonts requires fonts.googleapis.com (styles) + fonts.gstatic.com (font files).
+const HTML_CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' https://fonts.gstatic.com",
+  "img-src 'self' data: blob:",
+  "media-src 'self' blob:",
+  "connect-src 'self'",
+].join("; ");
+
+function sendHtml(file: string) {
+  return (_req: Request, res: Response) => {
+    res.setHeader("Content-Security-Policy", HTML_CSP);
+    res.sendFile(path.join(__dirname, `../public/${file}`));
+  };
+}
 
 const BUILT_IN_SYSTEM_PROMPT = `You are a helpful voice-first visual assistant. The user talks to you and hears your reply through text-to-speech.
 
@@ -71,6 +90,19 @@ function bootstrapAdminIfNeeded(): void {
 async function main() {
   showBanner();
 
+  // HIGH: Refuse to start without a session secret — a missing or default
+  // secret allows attackers to forge session cookies.
+  const sessionSecret = process.env.SESSION_SECRET?.trim();
+  if (!sessionSecret) {
+    console.error(
+      c.error(
+        "[Fatal] SESSION_SECRET is not set in .env. " +
+          "Generate one with `openssl rand -hex 32` and add it, then restart."
+      )
+    );
+    process.exit(1);
+  }
+
   // Warn the operator if envelope-encryption is unconfigured — startup
   // still proceeds, but any attempt to store a user key will throw.
   if (!process.env.KEYS_ENCRYPTION_KEY?.trim()) {
@@ -103,13 +135,33 @@ async function main() {
 
   const app = express();
   app.set("trust proxy", 1); // trust Nginx reverse proxy for secure cookies
-  app.use(cors());
+
+  // MEDIUM: Restrict cross-origin access. By default (no CORS_ORIGINS set)
+  // cross-origin requests are blocked. Set CORS_ORIGINS=https://your-domain.com
+  // (comma-separated) to allow specific origins.
+  const corsOrigins = process.env.CORS_ORIGINS?.split(",").map((s) => s.trim()).filter(Boolean);
+  app.use(
+    cors(
+      corsOrigins?.length
+        ? { origin: corsOrigins, credentials: true }
+        : { origin: false }
+    )
+  );
+
   app.use(express.json({ limit: "50mb" }));
+
+  // LOW: Security headers applied globally
+  app.use((_req: Request, res: Response, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "SAMEORIGIN");
+    res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    next();
+  });
 
   // ── Session ──
   app.use(session({
     name: "sid",
-    secret: process.env.SESSION_SECRET || "aside-session-secret-change-me",
+    secret: sessionSecret,
     resave: false,
     saveUninitialized: false,
     cookie: {
@@ -124,21 +176,18 @@ async function main() {
   app.use(express.static(path.join(__dirname, "../public")));
 
   // ── Public: auth + signup ──
+  // HIGH: Dedicated strict rate limit for auth endpoints (brute-force protection).
+  // Applied before the general 30/min limiter below and independently scoped.
+  app.use("/auth", rateLimiter(5, 60_000));
   app.use("/auth", createAuthRouter());
 
   // ── Public: health ──
   app.use("/health", createHealthRouter(mcpManager, conversations, skillLoader));
 
-  // ── Static HTML for voice client, signup, account ──
-  app.get("/app", (_req, res) => {
-    res.sendFile(path.join(__dirname, "../public/app.html"));
-  });
-  app.get("/signup", (_req, res) => {
-    res.sendFile(path.join(__dirname, "../public/signup.html"));
-  });
-  app.get("/account", (_req, res) => {
-    res.sendFile(path.join(__dirname, "../public/account.html"));
-  });
+  // ── Static HTML for voice client, signup, account (CSP applied via sendHtml) ──
+  app.get("/app", sendHtml("app.html"));
+  app.get("/signup", sendHtml("signup.html"));
+  app.get("/account", sendHtml("account.html"));
 
   // ── Rate limiter (applied to all API routes below) ──
   app.use(rateLimiter(30));
