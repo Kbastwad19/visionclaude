@@ -159,6 +159,11 @@
       color: #6FE3A8;
       box-shadow: 0 10px 30px -12px #1A1714;
     }
+    #talk.busy {
+      background: #1A1714;
+      color: #E89A6B;
+      box-shadow: 0 10px 30px -12px #1A1714;
+    }
     #response {
       margin-top: 40px;
       max-width: 380px;
@@ -380,7 +385,14 @@
     const CONVERSATION_KEY = 'aside_conversation_id';
     let conversationId = sessionStorage.getItem(CONVERSATION_KEY);
     let recognition = null;
-    let isListening = false;
+    // Pipeline state machine — only one /chat ↔ TTS cycle in flight at a time.
+    //   idle      : nothing happening, Talk starts a new turn
+    //   listening : SpeechRecognition active, Talk stops it
+    //   thinking  : /chat fetch in flight, Talk cancels it (AbortController)
+    //   speaking  : TTS playing, Talk stops the audio source
+    let chatState = 'idle';
+    let pipelineAbort = null;     // AbortController for /chat + /voice/speak fetches
+    let currentTtsSource = null;  // active BufferSourceNode, so we can .stop() it
     let videoStream = null;
     let usingFacingMode = 'environment';
     let cameraReadyPromise = null;
@@ -606,6 +618,53 @@
         talkBtn.title = '';
       }
     }
+
+    // ── Pipeline state machine ────────────────────────────────────────
+    // Single source of truth for the Talk button visuals. Each non-idle
+    // state knows how to cancel itself when Talk is pressed again.
+    function setChatState(next) {
+      chatState = next;
+      talkBtn.classList.remove('listening', 'busy');
+      switch (next) {
+        case 'idle':
+          talkBtn.textContent = 'Talk';
+          if (canChat) status.textContent = 'Ready';
+          break;
+        case 'listening':
+          talkBtn.textContent = 'Stop';
+          talkBtn.classList.add('listening');
+          status.textContent = 'Listening';
+          break;
+        case 'thinking':
+          talkBtn.textContent = 'Cancel';
+          talkBtn.classList.add('busy');
+          status.textContent = 'Thinking…';
+          break;
+        case 'speaking':
+          talkBtn.textContent = 'Stop';
+          talkBtn.classList.add('busy');
+          // status line keeps whatever sendToClaude set ("You: …" etc.)
+          break;
+      }
+    }
+
+    // Tear down whatever is in flight, return to idle. Safe to call from
+    // any state — each branch only does work if applicable.
+    function cancelPipeline() {
+      try { recognition?.abort(); } catch {}
+      if (pipelineAbort) {
+        try { pipelineAbort.abort(); } catch {}
+        pipelineAbort = null;
+      }
+      if (currentTtsSource) {
+        try { currentTtsSource.onended = null; } catch {}
+        try { currentTtsSource.stop(); } catch {}
+        try { currentTtsSource.disconnect(); } catch {}
+        currentTtsSource = null;
+      }
+      try { window.speechSynthesis?.cancel(); } catch {}
+      setChatState('idle');
+    }
     fetch('/auth/check')
       .then(r => r.json())
       .then(d => {
@@ -621,8 +680,7 @@
 
     let lastChat = null;
 
-    async function sendToClaude(text, imageBase64) {
-      status.textContent = 'Thinking…';
+    async function sendToClaude(text, imageBase64, signal) {
       const body = { text, conversation_id: conversationId || undefined };
       if (imageBase64) body.images = [imageBase64];
       const t0 = performance.now();
@@ -632,6 +690,7 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
+          signal,
         });
         data = await res.json();
       } catch (e) {
@@ -669,36 +728,45 @@
       return sharedAudioCtx;
     }
 
-    async function speak(text) {
+    async function speak(text, signal) {
       try {
         const res = await fetch('/voice/speak', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ text, voice: selectedVoice() }),
+          signal,
         });
         if (res.ok) {
           const buf = await res.arrayBuffer();
+          if (signal?.aborted) return;
           const ctx = getAudioContext();
-          // decodeAudioData uses the callback form for compatibility with
-          // older Safari; modern iOS returns a promise but accepts callbacks.
           const decoded = await new Promise((resolve, reject) => {
             try { ctx.decodeAudioData(buf, resolve, reject); }
             catch (e) { reject(e); }
           });
+          if (signal?.aborted) return;
           await new Promise((resolve) => {
             const src = ctx.createBufferSource();
+            currentTtsSource = src;
             src.buffer = decoded;
             src.connect(ctx.destination);
-            src.onended = resolve;
+            src.onended = () => {
+              if (currentTtsSource === src) currentTtsSource = null;
+              resolve();
+            };
             src.start();
           });
           return;
         }
         console.warn('[speak] server TTS HTTP', res.status);
       } catch (e) {
+        if (e?.name === 'AbortError') return; // cancelled mid-flight
         console.warn('[speak] server TTS failed, falling back to browser TTS', e);
       }
-      // Browser SpeechSynthesis fallback
+      // Browser SpeechSynthesis fallback. No source-node handle so we
+      // can't .stop() it — speechSynthesis.cancel() in cancelPipeline()
+      // would, but the fallback is so rare it's not worth wiring up.
+      if (signal?.aborted) return;
       const utt = new SpeechSynthesisUtterance(text);
       speechSynthesis.speak(utt);
     }
@@ -715,37 +783,45 @@
       recognition.maxAlternatives = 1;
 
       recognition.onstart = () => {
-        isListening = true;
-        talkBtn.textContent = 'Listening…';
-        talkBtn.classList.add('listening');
-        status.textContent = 'Listening';
+        // The click handler optimistically set 'listening'; reaffirm here
+        // in case it didn't (e.g. recognition started from a non-click path).
+        if (chatState !== 'listening') setChatState('listening');
       };
 
       recognition.onresult = async (event) => {
+        // If the pipeline was cancelled (user pressed Talk again) between
+        // the SR firing and us getting here, ignore the result entirely.
+        if (chatState !== 'listening') return;
         const transcript = event.results[0][0].transcript;
         status.textContent = `You: ${transcript}`;
-        talkBtn.textContent = 'Talk';
-        talkBtn.classList.remove('listening');
+        setChatState('thinking');
+        pipelineAbort = new AbortController();
+        const signal = pipelineAbort.signal;
         // Wait for the in-flight ensureCamera() (if any) so the first utterance
         // after enabling the camera doesn't capture before loadedmetadata fires.
         if (cameraReadyPromise) { try { await cameraReadyPromise; } catch {} }
+        if (signal.aborted) return;
         const frame = captureFrame();
         try {
-          const reply = await sendToClaude(transcript, frame);
+          const reply = await sendToClaude(transcript, frame, signal);
+          if (signal.aborted) return;
           responseEl.textContent = reply;
-          status.textContent = 'Ready';
-          await speak(reply);
+          setChatState('speaking');
+          await speak(reply, signal);
+          if (signal.aborted) return;
+          setChatState('idle');
         } catch (e) {
-          // 412 from /chat means the key disappeared between page load and
-          // now (e.g. the user cleared it on /account in another tab).
-          // Re-gate the button and show the setup banner instead of a
-          // useless "try again" message.
+          if (e?.name === 'AbortError') return; // cancelled by user
           if (lastChat?.status === 412) {
+            // Key disappeared between page load and now — re-gate Talk.
             canChat = false;
             applyChatReadiness({ canChat: false });
           } else {
             status.textContent = 'Error — try again';
+            setChatState('idle');
           }
+        } finally {
+          if (pipelineAbort?.signal === signal) pipelineAbort = null;
         }
       };
 
@@ -758,47 +834,43 @@
           status.textContent = 'No microphone available';
         } else if (e.error === 'network') {
           status.textContent = 'Network error during recognition — try again';
+        } else if (e.error === 'aborted') {
+          // We cancelled it ourselves via recognition.abort() — silent.
+          return;
         } else {
           status.textContent = `Voice error: ${e.error}`;
         }
-        isListening = false;
-        talkBtn.textContent = 'Talk';
-        talkBtn.classList.remove('listening');
+        if (chatState === 'listening') setChatState('idle');
       };
 
       recognition.onend = () => {
-        isListening = false;
-        talkBtn.textContent = 'Talk';
-        talkBtn.classList.remove('listening');
+        // If SR ended naturally while we're still nominally listening
+        // (no transcript captured, no abort), drop back to idle.
+        if (chatState === 'listening') setChatState('idle');
       };
 
       try {
         recognition.start();
       } catch (e) {
-        // Some browsers (notably Firefox iOS) expose webkitSpeechRecognition
-        // but throw synchronously when start() is called. Surface that
-        // instead of leaving the page silent.
         status.textContent = `Couldn't start voice: ${e?.message || e?.name || 'unknown'} — try Safari`;
-        isListening = false;
-        talkBtn.textContent = 'Talk';
-        talkBtn.classList.remove('listening');
+        setChatState('idle');
       }
     }
 
     talkBtn.onclick = async () => {
-      if (isListening) {
-        recognition?.stop();
-        return;
-      }
       if (!canChat) {
         status.textContent = 'Setup required — see Account';
         return;
       }
-      // Prime the AudioContext inside the user gesture so iOS Safari lets
-      // us play TTS responses later (when we're no longer in a gesture).
+      // Press while anything is in flight cancels it.
+      if (chatState !== 'idle') {
+        cancelPipeline();
+        return;
+      }
+      // Optimistic state so a second tap during the ~50ms before
+      // recognition.onstart fires still hits the cancel branch above.
+      setChatState('listening');
       try { getAudioContext(); } catch {}
-      // Request camera inside the user gesture (required by iOS Safari).
-      // Track the promise so onresult can await it before captureFrame().
       cameraReadyPromise = ensureCamera().finally(() => { cameraReadyPromise = null; });
       startListening();
     };
