@@ -66,7 +66,7 @@ async function main() {
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
+      secure: false, // Nginx handles HTTPS at the edge
       sameSite: "lax",
       maxAge: 24 * 60 * 60 * 1000, // 24 hours
     },
