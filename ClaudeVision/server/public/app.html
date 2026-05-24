@@ -69,6 +69,20 @@
       border-radius: 999px;
     }
     #vision-badge.off { color: #7B7468; }
+    #vision-badge.err { color: #E89A6B; }
+    #vision-status {
+      font-family: ui-monospace, monospace;
+      font-size: 12px;
+      letter-spacing: 0.04em;
+      color: #7B7468;
+      margin: -16px 0 24px;
+      min-height: 18px;
+      max-width: 360px;
+      text-align: center;
+      padding: 0 16px;
+    }
+    #vision-status.err { color: #C25A2B; }
+    #vision-status.ok { color: #2F8A57; }
     #talk {
       width: 120px;
       height: 120px;
@@ -124,6 +138,7 @@
     <div id="vision-badge" class="off">Vision off</div>
   </div>
   <canvas id="snap" hidden></canvas>
+  <div id="vision-status"></div>
   <div id="status">Ready</div>
   <button id="talk">Talk</button>
   <div id="response"></div>
@@ -142,16 +157,51 @@
     const previewEl = document.getElementById('preview');
     const placeholderEl = document.getElementById('preview-placeholder');
     const visionBadge = document.getElementById('vision-badge');
+    const visionStatus = document.getElementById('vision-status');
+
+    function setVisionStatus(text, kind /* 'ok' | 'err' | '' */) {
+      visionStatus.textContent = text;
+      visionStatus.classList.toggle('err', kind === 'err');
+      visionStatus.classList.toggle('ok', kind === 'ok');
+    }
+
+    function explainCameraError(err) {
+      const name = err?.name || '';
+      const msg = err?.message || '';
+      if (name === 'NotAllowedError') {
+        // Could be a user denial OR a Permissions-Policy header (Plesk default)
+        if (/permission|policy/i.test(msg)) return 'Camera blocked by site policy (Permissions-Policy header)';
+        return 'Camera permission denied — allow it in browser site settings';
+      }
+      if (name === 'NotFoundError' || name === 'OverconstrainedError') return 'No camera found on this device';
+      if (name === 'NotReadableError') return 'Camera is in use by another app';
+      if (name === 'SecurityError') return 'Browser blocked the camera (insecure context?)';
+      return `Camera error: ${name || msg || 'unknown'}`;
+    }
+
+    // Pre-flight: surface obvious blockers before the user taps Talk
+    if (!window.isSecureContext) {
+      setVisionStatus('HTTPS required for camera — voice only over plain HTTP', 'err');
+      visionBadge.textContent = 'Voice only';
+      visionBadge.classList.add('err');
+      placeholderEl.textContent = 'HTTPS required';
+    } else if (!navigator.mediaDevices?.getUserMedia) {
+      setVisionStatus('Browser does not expose getUserMedia — voice only', 'err');
+      visionBadge.textContent = 'Voice only';
+      visionBadge.classList.add('err');
+      placeholderEl.textContent = 'Not supported';
+    }
 
     async function ensureCamera() {
       if (videoStream) return true;
-      if (!navigator.mediaDevices?.getUserMedia) return false;
+      if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) return false;
       // Try rear camera first, fall back to whatever's available (front, laptop webcam)
       const attempts = [
         { video: { facingMode: { exact: 'environment' } }, audio: false },
         { video: { facingMode: 'environment' }, audio: false },
         { video: true, audio: false },
       ];
+      let lastErr = null;
       for (const constraints of attempts) {
         try {
           videoStream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -164,14 +214,19 @@
           placeholderEl.style.display = 'none';
           visionBadge.textContent = usingFacingMode === 'environment' ? 'Vision on' : 'Vision on · front';
           visionBadge.classList.remove('off');
+          visionBadge.classList.remove('err');
+          setVisionStatus(`Vision on · ${usingFacingMode} camera`, 'ok');
           return true;
         } catch (err) {
-          // Try next constraint set
-          console.warn('[camera] attempt failed', constraints, err.name);
+          lastErr = err;
+          console.warn('[camera] attempt failed', constraints, err.name, err.message);
         }
       }
-      placeholderEl.textContent = 'Camera unavailable — voice only';
+      const reason = explainCameraError(lastErr);
+      placeholderEl.textContent = 'Voice only';
       visionBadge.textContent = 'Voice only';
+      visionBadge.classList.add('err');
+      setVisionStatus(reason, 'err');
       return false;
     }
 
