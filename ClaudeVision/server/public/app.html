@@ -15,8 +15,24 @@
       align-items: center;
       justify-content: center;
       min-height: 100vh;
+      padding-top: calc(56px + env(safe-area-inset-top));
+      padding-bottom: env(safe-area-inset-bottom);
       font-family: 'Inter Tight', sans-serif;
       -webkit-font-smoothing: antialiased;
+    }
+    #topbar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      padding: env(safe-area-inset-top) 16px 8px;
+      background: rgba(244, 239, 229, 0.85);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      z-index: 20;
     }
     #status {
       font-size: 13px;
@@ -106,7 +122,7 @@
       font-size: 12px;
       letter-spacing: 0.04em;
       color: #7B7468;
-      margin: -16px 0 24px;
+      margin: 12px 0 4px;
       min-height: 18px;
       max-width: 360px;
       text-align: center;
@@ -146,8 +162,6 @@
       padding: 0 24px;
     }
     #logout, #diag-open {
-      position: fixed;
-      top: calc(20px + env(safe-area-inset-top));
       background: transparent;
       border: 1px solid #D9D1C0;
       color: #7B7468;
@@ -157,8 +171,6 @@
       border-radius: 999px;
       cursor: pointer;
     }
-    #logout { right: 24px; }
-    #diag-open { right: 116px; }
     #logout:hover, #diag-open:hover { border-color: #7B7468; }
     #diag-overlay {
       position: fixed;
@@ -253,8 +265,10 @@
   </style>
 </head>
 <body>
-  <button id="diag-open">Diagnostics</button>
-  <button id="logout">Log out</button>
+  <header id="topbar">
+    <button id="diag-open">Diagnostics</button>
+    <button id="logout">Log out</button>
+  </header>
 
   <div id="diag-overlay" role="dialog" aria-modal="true">
     <div id="diag-panel">
@@ -277,9 +291,10 @@
     <div id="preview-placeholder">Tap Talk to enable camera</div>
     <div id="vision-badge" class="off">Vision off</div>
   </div>
+  <div id="vision-status"></div>
   <div id="vision-toggle-row">
     <input type="checkbox" id="vision-toggle" checked />
-    <label for="vision-toggle">Send camera frames to Claude</label>
+    <label for="vision-toggle">Camera on — send frames to Claude</label>
   </div>
   <div id="voice-row">
     <label for="voice-select">Voice</label>
@@ -303,7 +318,6 @@
     </select>
   </div>
   <canvas id="snap" hidden></canvas>
-  <div id="vision-status"></div>
   <div id="status">Ready</div>
   <button id="talk">Talk</button>
   <div id="response"></div>
@@ -494,9 +508,10 @@
       return dataUrl.replace(/^data:image\/jpeg;base64,/, '');
     }
 
-    visionToggle.addEventListener('change', () => {
-      localStorage.setItem(VISION_KEY, visionToggle.checked ? '1' : '0');
+    const previewWrap = document.getElementById('preview-wrap');
+    function applyVisionToggleUI() {
       if (visionToggle.checked) {
+        previewWrap.style.display = '';
         placeholderEl.textContent = 'Tap Talk to enable camera';
         placeholderEl.style.display = '';
         visionBadge.textContent = 'Vision off';
@@ -505,21 +520,15 @@
         setVisionStatus('', '');
       } else {
         teardownStream();
-        placeholderEl.textContent = 'Camera disabled';
-        placeholderEl.style.display = '';
-        visionBadge.textContent = 'Vision disabled';
-        visionBadge.classList.add('off');
-        visionBadge.classList.remove('err');
-        setVisionStatus('Camera disabled — chat will be voice only', '');
+        previewWrap.style.display = 'none';
+        setVisionStatus('Camera off — voice-only chat', '');
       }
-    });
-
-    // Apply initial toggle state (in case the user opted out previously)
-    if (!visionEnabled()) {
-      placeholderEl.textContent = 'Camera disabled';
-      visionBadge.textContent = 'Vision disabled';
-      setVisionStatus('Camera disabled — chat will be voice only', '');
     }
+    visionToggle.addEventListener('change', () => {
+      localStorage.setItem(VISION_KEY, visionToggle.checked ? '1' : '0');
+      applyVisionToggleUI();
+    });
+    if (!visionEnabled()) applyVisionToggleUI();
 
     // Session check on load
     fetch('/auth/check')
@@ -569,8 +578,20 @@
       return data?.text || '';
     }
 
+    // Single AudioContext reused across speak() calls. Created lazily inside
+    // a user gesture so iOS Safari's autoplay policy is satisfied — the same
+    // WebAudio path the Test tone button uses (which is known to work).
+    let sharedAudioCtx = null;
+    function getAudioContext() {
+      if (!sharedAudioCtx) {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        sharedAudioCtx = new Ctx();
+      }
+      if (sharedAudioCtx.state === 'suspended') sharedAudioCtx.resume();
+      return sharedAudioCtx;
+    }
+
     async function speak(text) {
-      // Try Deepgram Aura TTS first
       try {
         const res = await fetch('/voice/speak', {
           method: 'POST',
@@ -578,14 +599,27 @@
           body: JSON.stringify({ text, voice: selectedVoice() }),
         });
         if (res.ok) {
-          const blob = await res.blob();
-          const url = URL.createObjectURL(blob);
-          const audio = new Audio(url);
-          audio.onended = () => URL.revokeObjectURL(url);
-          await audio.play();
+          const buf = await res.arrayBuffer();
+          const ctx = getAudioContext();
+          // decodeAudioData uses the callback form for compatibility with
+          // older Safari; modern iOS returns a promise but accepts callbacks.
+          const decoded = await new Promise((resolve, reject) => {
+            try { ctx.decodeAudioData(buf, resolve, reject); }
+            catch (e) { reject(e); }
+          });
+          await new Promise((resolve) => {
+            const src = ctx.createBufferSource();
+            src.buffer = decoded;
+            src.connect(ctx.destination);
+            src.onended = resolve;
+            src.start();
+          });
           return;
         }
-      } catch { /* fall through to browser TTS */ }
+        console.warn('[speak] server TTS HTTP', res.status);
+      } catch (e) {
+        console.warn('[speak] server TTS failed, falling back to browser TTS', e);
+      }
       // Browser SpeechSynthesis fallback
       const utt = new SpeechSynthesisUtterance(text);
       speechSynthesis.speak(utt);
@@ -649,6 +683,9 @@
         recognition?.stop();
         return;
       }
+      // Prime the AudioContext inside the user gesture so iOS Safari lets
+      // us play TTS responses later (when we're no longer in a gesture).
+      try { getAudioContext(); } catch {}
       // Request camera inside the user gesture (required by iOS Safari).
       // Track the promise so onresult can await it before captureFrame().
       cameraReadyPromise = ensureCamera().finally(() => { cameraReadyPromise = null; });
