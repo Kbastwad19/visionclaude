@@ -81,8 +81,8 @@ async function main() {
   // ── Public: health ──
   app.use("/health", createHealthRouter(mcpManager, conversations, skillLoader));
 
-  // ── Session-gated: voice chat page ──
-  app.get("/app", requireAuth, (_req, res) => {
+  // ── Voice chat page (client-side auth check in app.html) ──
+  app.get("/app", (_req, res) => {
     res.sendFile(path.join(__dirname, "../public/app.html"));
   });
 
