@@ -1,120 +1,234 @@
 import "dotenv/config";
-import express from "express";
+import express, { type Request, type Response } from "express";
 import cors from "cors";
+import session from "express-session";
+import path from "path";
+import { fileURLToPath } from "url";
 import { MCPManager } from "./mcp-manager.js";
 import { ClaudeClient } from "./claude-client.js";
 import { ConversationStore } from "./conversation.js";
 import { SkillLoader } from "./skill-loader.js";
-import { gatewayAuth, rateLimiter, RequestQueue } from "./middleware.js";
+import { gatewayAuth, rateLimiter, requireAuth, requireAnyAuth, RequestQueue } from "./middleware.js";
 import { showBanner, showServerInfo, c } from "./console-theme.js";
 import { createChatRouter } from "./routes/chat.js";
 import { createHealthRouter } from "./routes/health.js";
 import { createConfigRouter } from "./routes/config.js";
 import { createToolsRouter } from "./routes/tools.js";
+import { createAuthRouter } from "./routes/auth.js";
+import { createVoiceRouter } from "./routes/voice.js";
+import { createMeRouter } from "./routes/me.js";
+import { createAdminRouter } from "./routes/admin.js";
+import { getDb, closeDb } from "./db.js";
+import { countUsers, createUser, findUserByEmail } from "./users.js";
+import { suggestMasterKey } from "./crypto.js";
 import type { ServerConfig } from "./types.js";
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT || "18790", 10);
 
-const DEFAULT_SYSTEM_PROMPT = `You are Claude, an AI vision assistant seeing the world through the user's camera (iPhone or Meta Ray-Ban smart glasses) in real-time.
+// LOW: HTML pages get a Content-Security-Policy in addition to the global headers.
+// Google Fonts requires fonts.googleapis.com (styles) + fonts.gstatic.com (font files).
+const HTML_CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' https://fonts.gstatic.com",
+  "img-src 'self' data: blob:",
+  "media-src 'self' blob:",
+  "connect-src 'self'",
+].join("; ");
 
-VISION ANALYSIS:
-- You receive a live camera frame with each message. ALWAYS analyze the image carefully before responding.
-- Describe what you ACTUALLY see — objects, people, text, screens, environments, colors, brands, labels.
-- If you see text (signs, screens, labels, books), read it exactly.
-- If you see a product, identify it specifically (brand, model, color).
-- If you see a person, describe what they're doing, not who they are.
-- If you see a scene/environment, describe the setting, lighting, and notable elements.
-- NEVER guess or hallucinate. If you can't make something out clearly, say so.
-- Be specific and accurate. "I see a silver MacBook Pro on a wooden desk" not "I see a laptop on a table."
+function sendHtml(file: string) {
+  return (_req: Request, res: Response) => {
+    res.setHeader("Content-Security-Policy", HTML_CSP);
+    res.sendFile(path.join(__dirname, `../public/${file}`));
+  };
+}
 
-RESPONSE STYLE:
-- Keep responses concise (1-3 sentences for simple questions, more for detailed analysis).
-- Speak naturally as if having a conversation — the user hears your response via text-to-speech.
-- Don't use markdown, bullet points, or formatting — your response is spoken aloud.
-- Don't say "In the image I can see..." — just describe directly, like a friend would.
+const BUILT_IN_SYSTEM_PROMPT = `You are a helpful voice-first visual assistant. The user talks to you and hears your reply through text-to-speech.
+
+BREVITY IS THE TOP PRIORITY.
+- Default to 1 short sentence. 2 only if the answer genuinely needs it.
+- Only give longer, structured answers when the user explicitly asks ("describe in detail", "tell me everything", "explain").
+- No markdown, no bullet lists, no headings — the response is spoken aloud.
+- Never start with "I can see", "In the image", "Looking at the picture" — just answer directly.
+- If you need one missing detail to help, ask ONE short follow-up question instead of guessing.
+
+EXAMPLES:
+- User: "What am I looking at?" → "A hot tub in your back garden."
+- User: "What's in this carton?" → "Whole milk, 2.4 litres, best before 12 June."
+- User: "Where's my phone?" → "On the kitchen counter, next to the kettle."
+- User: "Describe this in detail." → (then it's fine to give a full description.)
 
 TOOLS:
-- When the user asks you to do something that requires a tool (send email, check calendar, etc.), use the appropriate tool.
-- You can combine vision analysis with tool use (e.g., "read this business card and save the contact").`;
+- When the user asks for something that requires a tool (send email, search web, check calendar, etc.), use the appropriate tool.`;
+
+const DEFAULT_SYSTEM_PROMPT =
+  process.env.VOICE_ASSISTANT_PROMPT?.trim() || BUILT_IN_SYSTEM_PROMPT;
+
+function bootstrapAdminIfNeeded(): void {
+  // On first run, create the admin user from BOOTSTRAP_ADMIN_EMAIL +
+  // BOOTSTRAP_ADMIN_PASSWORD. Idempotent: if a user with that email
+  // already exists we just promote them to admin if they weren't.
+  if (countUsers() > 0) return;
+  const email = process.env.BOOTSTRAP_ADMIN_EMAIL?.trim();
+  const password = process.env.BOOTSTRAP_ADMIN_PASSWORD?.trim();
+  if (!email || !password) {
+    console.log(
+      c.warn(
+        "[Bootstrap] No users yet. Set BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_PASSWORD in .env on first run to create the admin."
+      )
+    );
+    return;
+  }
+  if (findUserByEmail(email)) return;
+  createUser({ email, password, isAdmin: true });
+  console.log(c.success(`[Bootstrap] Admin user created: ${email}`));
+  console.log(c.dim("   Remove BOOTSTRAP_ADMIN_* from .env now — login from the web UI."));
+}
 
 async function main() {
-  // ── Show Banner ──
   showBanner();
 
-  // ── Initialize MCP Manager ──
+  // HIGH: Refuse to start without a session secret — a missing or default
+  // secret allows attackers to forge session cookies.
+  const sessionSecret = process.env.SESSION_SECRET?.trim();
+  if (!sessionSecret) {
+    console.error(
+      c.error(
+        "[Fatal] SESSION_SECRET is not set in .env. " +
+          "Generate one with `openssl rand -hex 32` and add it, then restart."
+      )
+    );
+    process.exit(1);
+  }
+
+  // Warn the operator if envelope-encryption is unconfigured — startup
+  // still proceeds, but any attempt to store a user key will throw.
+  if (!process.env.KEYS_ENCRYPTION_KEY?.trim()) {
+    console.log(c.warn("[Crypto] KEYS_ENCRYPTION_KEY is not set in .env."));
+    console.log(c.dim("   Suggested value: " + suggestMasterKey()));
+    console.log(c.dim("   Add it to .env and restart. The server starts without it but storing API keys will fail."));
+  }
+
+  // Open DB + run migrations + create bootstrap admin if first run
+  getDb();
+  bootstrapAdminIfNeeded();
+
   const mcpManager = new MCPManager();
   await mcpManager.initialize();
 
-  // ── Initialize Skill Loader ──
   const skillLoader = new SkillLoader();
   skillLoader.load();
 
-  // ── Build system prompt with skills ──
   const systemPrompt = DEFAULT_SYSTEM_PROMPT + skillLoader.buildSystemPromptSection();
 
-  // ── Server config ──
   const config: ServerConfig = {
     systemPrompt,
     model: process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514",
     maxTokens: 4096,
   };
 
-  // ── Initialize Claude Client ──
   const claudeClient = new ClaudeClient(mcpManager, config);
-
-  // ── Conversation store ──
   const conversations = new ConversationStore();
+  const requestQueue = new RequestQueue(2);
 
-  // ── Request queue (prevents concurrent Claude API races) ──
-  const requestQueue = new RequestQueue(2); // max 2 concurrent API calls
-
-  // ── Express app ──
   const app = express();
-  app.use(cors());
+  app.set("trust proxy", 1); // trust Nginx reverse proxy for secure cookies
+
+  // MEDIUM: Restrict cross-origin access. By default (no CORS_ORIGINS set)
+  // cross-origin requests are blocked. Set CORS_ORIGINS=https://your-domain.com
+  // (comma-separated) to allow specific origins.
+  const corsOrigins = process.env.CORS_ORIGINS?.split(",").map((s) => s.trim()).filter(Boolean);
+  app.use(
+    cors(
+      corsOrigins?.length
+        ? { origin: corsOrigins, credentials: true }
+        : { origin: false }
+    )
+  );
+
   app.use(express.json({ limit: "50mb" }));
 
-  // ── Security middleware ──
-  app.use(gatewayAuth());    // Optional API key auth (set GATEWAY_API_KEY in .env)
-  app.use(rateLimiter(30));  // 30 requests per minute per IP
+  // LOW: Security headers applied globally
+  app.use((_req: Request, res: Response, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "SAMEORIGIN");
+    res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    next();
+  });
 
-  // ── Routes ──
-  app.use("/chat", createChatRouter(claudeClient, conversations, requestQueue));
+  // ── Session ──
+  app.use(session({
+    name: "sid",
+    secret: sessionSecret,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      secure: false,
+      sameSite: "lax",
+      maxAge: 24 * 60 * 60 * 1000,
+    },
+  }));
+
+  // ── Public: static landing page ──
+  app.use(express.static(path.join(__dirname, "../public")));
+
+  // ── Public: auth + signup ──
+  // HIGH: Dedicated strict rate limit for auth endpoints (brute-force protection).
+  // Applied before the general 30/min limiter below and independently scoped.
+  app.use("/auth", rateLimiter(5, 60_000));
+  app.use("/auth", createAuthRouter());
+
+  // ── Public: health ──
   app.use("/health", createHealthRouter(mcpManager, conversations, skillLoader));
+
+  // ── Static HTML for voice client, signup, account (CSP applied via sendHtml) ──
+  app.get("/app", sendHtml("app.html"));
+  app.get("/signup", sendHtml("signup.html"));
+  app.get("/account", sendHtml("account.html"));
+
+  // ── Rate limiter (applied to all API routes below) ──
+  app.use(rateLimiter(30));
+
+  // ── User self-service: /me/api-keys etc. ──
+  app.use("/me", createMeRouter());
+
+  // ── Admin: invites + user list ──
+  app.use("/admin", createAdminRouter());
+
+  // ── Session or gateway key: chat + voice ──
+  app.use("/chat", requireAnyAuth, createChatRouter(claudeClient, conversations, requestQueue));
+  app.use("/voice", requireAuth, createVoiceRouter());
+
+  // ── Gateway key only: native app admin routes ──
+  app.use(gatewayAuth());
   app.use("/config", createConfigRouter(claudeClient));
   app.use("/tools", createToolsRouter(mcpManager));
 
-  // Skills endpoint
   app.get("/skills", (_req, res) => {
-    res.json({
-      skills: skillLoader.getSkillList(),
-      count: skillLoader.count,
-    });
+    res.json({ skills: skillLoader.getSkillList(), count: skillLoader.count });
   });
 
-  // Skills reload endpoint
   app.post("/skills/reload", (_req, res) => {
     skillLoader.reload();
-    // Update system prompt with new skills
     const newPrompt = DEFAULT_SYSTEM_PROMPT + skillLoader.buildSystemPromptSection();
     claudeClient.updateConfig({ systemPrompt: newPrompt });
-    res.json({
-      message: "Skills reloaded",
-      skills: skillLoader.getSkillList(),
-      count: skillLoader.count,
-    });
+    res.json({ message: "Skills reloaded", skills: skillLoader.getSkillList(), count: skillLoader.count });
   });
 
-  // ── Start server ──
+  // ── Start ──
   const server = app.listen(PORT, "0.0.0.0", () => {
     const mcpServers = mcpManager.getServerNames();
     const toolCount = mcpManager.getToolsForClaude().length;
     showServerInfo(PORT, mcpServers.length, toolCount, skillLoader.count);
   });
 
-  // ── Graceful shutdown ──
   const shutdown = async () => {
     console.log(c.orange("\n   ▸ Shutting down VisionClaude Gateway..."));
     conversations.destroy();
+    closeDb();
     await mcpManager.shutdown();
     server.close(() => {
       console.log(c.dim("   Gateway stopped.\n"));
