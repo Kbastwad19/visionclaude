@@ -14,17 +14,18 @@ export function createHealthRouter(
     const servers = mcpManager.getServerStatus();
     const toolCount = mcpManager.getAllDiscoveredTools().length;
 
-    // LOW: Return only counts, not names/details, to avoid capability disclosure.
     res.json({
       status: "ok",
-      uptime: Math.floor(process.uptime()),
+      uptime: process.uptime(),
       mcp: {
-        serverCount: servers.length,
+        servers,
         totalTools: toolCount,
       },
       skills: {
         count: skillLoader?.count ?? 0,
+        loaded: skillLoader?.getSkillList() ?? [],
       },
+      conversations: conversations.size,
     });
   });
 
