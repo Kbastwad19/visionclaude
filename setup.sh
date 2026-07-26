@@ -244,12 +244,18 @@ configure_api_key() {
     print_step "Step 2/5 — Anthropic API Key"
     echo ""
 
+    local server_dir="$SCRIPT_DIR/server"
+    if [[ ! -d "$server_dir" && -d "$SCRIPT_DIR/ClaudeVision/server" ]]; then
+        server_dir="$SCRIPT_DIR/ClaudeVision/server"
+    fi
+    mkdir -p "$server_dir"
+
     local api_key=""
 
     # Check existing .env
-    if [[ -f "$SCRIPT_DIR/server/.env" ]]; then
+    if [[ -f "$server_dir/.env" ]]; then
         local existing_key
-        existing_key=$(grep "^ANTHROPIC_API_KEY=" "$SCRIPT_DIR/server/.env" 2>/dev/null | cut -d= -f2-)
+        existing_key=$(grep "^ANTHROPIC_API_KEY=" "$server_dir/.env" 2>/dev/null | cut -d= -f2-)
         if [[ -n "$existing_key" && "$existing_key" != "sk-ant-..." ]]; then
             local masked="${existing_key:0:12}...${existing_key: -4}"
             print_ok "API key found in .env: ${DIM}${masked}${RESET}"
@@ -289,7 +295,7 @@ configure_api_key() {
     fi
 
     # Write .env
-    cat > "$SCRIPT_DIR/server/.env" << EOF
+    cat > "$server_dir/.env" << EOF
 ANTHROPIC_API_KEY=${api_key}
 PORT=18790
 EOF
@@ -325,7 +331,12 @@ build_server() {
     print_step "Step 3/5 — Building Gateway Server"
     echo ""
 
-    cd "$SCRIPT_DIR/server"
+    local server_dir="$SCRIPT_DIR/server"
+    if [[ ! -d "$server_dir" && -d "$SCRIPT_DIR/ClaudeVision/server" ]]; then
+        server_dir="$SCRIPT_DIR/ClaudeVision/server"
+    fi
+
+    cd "$server_dir"
 
     # Install dependencies
     print_info "Installing npm dependencies..."
@@ -567,7 +578,11 @@ echo ""
 echo -e "${ORANGE}  ▸ Starting VisionClaude Gateway...${RESET}"
 echo ""
 
-cd "$SCRIPT_DIR/server"
+if [[ -d "$SCRIPT_DIR/server" ]]; then
+    cd "$SCRIPT_DIR/server"
+elif [[ -d "$SCRIPT_DIR/ClaudeVision/server" ]]; then
+    cd "$SCRIPT_DIR/ClaudeVision/server"
+fi
 
 if [[ ! -d "node_modules" ]]; then
     echo -e "${WHITE}  Installing dependencies...${RESET}"
