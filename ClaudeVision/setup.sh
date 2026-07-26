@@ -29,13 +29,26 @@ print_warn() { echo -e "  ${YELLOW}⚠${RESET} $1"; }
 print_info() { echo -e "  ${CYAN}→${RESET} $1"; }
 print_dim() { echo -e "  ${DIM}$1${RESET}"; }
 
+IS_CI=false
+if [[ "$CI" == "true" || "$1" == "--ci" || "$1" == "-y" ]]; then
+    IS_CI=true
+fi
+
 prompt_input() {
+    if [[ "$IS_CI" == "true" ]]; then
+        echo ""
+        return 0
+    fi
     echo -ne "  ${LIGHT_ORANGE}▸${RESET} $1 "
     read -r REPLY
     echo "$REPLY"
 }
 
 prompt_confirm() {
+    if [[ "$IS_CI" == "true" ]]; then
+        echo -e "  ${LIGHT_ORANGE}▸${RESET} $1 ${DIM}[Y/n] (auto-yes in CI)${RESET}"
+        return 0
+    fi
     echo -ne "  ${LIGHT_ORANGE}▸${RESET} $1 ${DIM}[Y/n]${RESET} "
     read -r REPLY
     case "$REPLY" in
@@ -45,6 +58,10 @@ prompt_confirm() {
 }
 
 prompt_secret() {
+    if [[ "$IS_CI" == "true" ]]; then
+        echo ""
+        return 0
+    fi
     echo -ne "  ${LIGHT_ORANGE}▸${RESET} $1 "
     read -rs REPLY
     echo ""

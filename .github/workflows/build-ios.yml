@@ -1,0 +1,64 @@
+name: Build Unsigned iOS IPA
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    name: Build Unsigned IPA
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Select Xcode Version
+        run: |
+          sudo xcode-select -s /Applications/Xcode_15.4.app || sudo xcode-select -s /Applications/Xcode_15.2.app || true
+          xcrun xcodebuild -version
+
+      - name: Install XcodeGen
+        run: |
+          command -v xcodegen || brew install xcodegen
+
+      - name: Execute Setup Script
+        run: |
+          chmod +x setup.sh ClaudeVision/setup.sh
+          CI=true ./setup.sh --ci
+
+      - name: Resolve Package Dependencies
+        run: |
+          xcodebuild -resolvePackageDependencies -project ClaudeVision/ios/ClaudeVision.xcodeproj -scheme ClaudeVision
+
+      - name: Build App (Unsigned)
+        run: |
+          xcodebuild clean build \
+            -project ClaudeVision/ios/ClaudeVision.xcodeproj \
+            -scheme ClaudeVision \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      - name: Package into IPA
+        run: |
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/ClaudeVision.app Payload/
+          zip -r VisionClaude_Unsigned.ipa Payload
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VisionClaude_Unsigned.ipa
+          path: VisionClaude_Unsigned.ipa
+          retention-days: 5

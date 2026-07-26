@@ -29,13 +29,26 @@ print_warn() { echo -e "  ${YELLOW}⚠${RESET} $1"; }
 print_info() { echo -e "  ${CYAN}→${RESET} $1"; }
 print_dim() { echo -e "  ${DIM}$1${RESET}"; }
 
+IS_CI=false
+if [[ "$CI" == "true" || "$1" == "--ci" || "$1" == "-y" ]]; then
+    IS_CI=true
+fi
+
 prompt_input() {
+    if [[ "$IS_CI" == "true" ]]; then
+        echo ""
+        return 0
+    fi
     echo -ne "  ${LIGHT_ORANGE}▸${RESET} $1 "
     read -r REPLY
     echo "$REPLY"
 }
 
 prompt_confirm() {
+    if [[ "$IS_CI" == "true" ]]; then
+        echo -e "  ${LIGHT_ORANGE}▸${RESET} $1 ${DIM}[Y/n] (auto-yes in CI)${RESET}"
+        return 0
+    fi
     echo -ne "  ${LIGHT_ORANGE}▸${RESET} $1 ${DIM}[Y/n]${RESET} "
     read -r REPLY
     case "$REPLY" in
@@ -45,6 +58,10 @@ prompt_confirm() {
 }
 
 prompt_secret() {
+    if [[ "$IS_CI" == "true" ]]; then
+        echo ""
+        return 0
+    fi
     echo -ne "  ${LIGHT_ORANGE}▸${RESET} $1 "
     read -rs REPLY
     echo ""
@@ -384,7 +401,11 @@ build_ios() {
     fi
 
     # Generate Xcode project
-    cd "$SCRIPT_DIR/ios"
+    if [[ -d "$SCRIPT_DIR/ios" ]]; then
+        cd "$SCRIPT_DIR/ios"
+    elif [[ -d "$SCRIPT_DIR/ClaudeVision/ios" ]]; then
+        cd "$SCRIPT_DIR/ClaudeVision/ios"
+    fi
     print_info "Generating Xcode project..."
     xcodegen generate 2>&1 | tail -1
     print_ok "Xcode project generated"
@@ -398,6 +419,9 @@ build_ios() {
     # Update the default hostname in ClaudeConfig.swift
     if [[ -f "$SCRIPT_DIR/ios/ClaudeVision/Models/ClaudeConfig.swift" ]]; then
         sed -i '' "s/MR-DULA-SOLUTIONS.local/${hostname}.local/g" "$SCRIPT_DIR/ios/ClaudeVision/Models/ClaudeConfig.swift" 2>/dev/null || true
+        print_ok "Updated default gateway host in ClaudeConfig.swift"
+    elif [[ -f "$SCRIPT_DIR/ClaudeVision/ios/ClaudeVision/Models/ClaudeConfig.swift" ]]; then
+        sed -i '' "s/MR-DULA-SOLUTIONS.local/${hostname}.local/g" "$SCRIPT_DIR/ClaudeVision/ios/ClaudeVision/Models/ClaudeConfig.swift" 2>/dev/null || true
         print_ok "Updated default gateway host in ClaudeConfig.swift"
     fi
 
@@ -566,7 +590,7 @@ STARTEOF
 main() {
     SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-    clear
+    [[ "$IS_CI" == "true" ]] || clear
     show_logo
     show_welcome
 
